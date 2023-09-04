@@ -7,6 +7,8 @@ Date: 21-01-2023
 import numpy as np
 from ..dynamics.Quaternion import Quaternions
 from sklearn.metrics import mean_squared_error
+from ..dynamics.tools import *
+
 
 rev_day = 15.23166528
 w_orbit = np.array([0, - 2 * np.pi * rev_day / 86400, 0])
@@ -141,46 +143,6 @@ class EKF:
     def noise_jacobian_model(self, x, dt) -> np.array:
         pass
 
-    @staticmethod
-    def skewsymmetricmatrix(x_omega_b):
-        S_omega = np.zeros((3, 3))
-        S_omega[1, 0] = x_omega_b[2]
-        S_omega[2, 0] = -x_omega_b[1]
-
-        S_omega[0, 1] = -x_omega_b[2]
-        S_omega[0, 2] = x_omega_b[1]
-
-        S_omega[2, 1] = x_omega_b[0]
-        S_omega[1, 2] = -x_omega_b[0]
-        return S_omega
-
-    @staticmethod
-    def omega4kinematics(x_omega_b):
-        Omega = np.zeros((4,4))
-        Omega[1, 0] = -x_omega_b[2]
-        Omega[2, 0] = x_omega_b[1]
-        Omega[3, 0] = -x_omega_b[0]
-
-        Omega[0, 1] = x_omega_b[2]
-        Omega[0, 2] = -x_omega_b[1]
-        Omega[0, 3] = x_omega_b[0]
-
-        Omega[1, 2] = x_omega_b[0]
-        Omega[1, 3] = x_omega_b[1]
-
-        Omega[2, 1] = -x_omega_b[0]
-        Omega[2, 3] = x_omega_b[2]
-
-        Omega[3, 1] = -x_omega_b[1]
-        Omega[3, 2] = -x_omega_b[2]
-        return Omega
-
-
-def skew(x):
-    return np.array([[0, -x[2], x[1]],
-                     [x[2], 0, -x[0]],
-                     [-x[1], x[0], 0]])
-
 
 class MEKF(EKF):
     # https://ntrs.nasa.gov/api/citations/19960035754/downloads/19960035754.pdf
@@ -277,7 +239,7 @@ class MEKF(EKF):
         rot = np.linalg.norm(omega * dt)
         mag = rot/dt
         if rot != 0:
-            u_x = self.skewsymmetricmatrix(omega)
+            u_x = skewsymmetricmatrix(omega)
             u_x2 = u_x @ u_x
             theta = np.identity(3) - u_x * dt + 0.5 * u_x2 * dt**2
         else:
@@ -288,7 +250,7 @@ class MEKF(EKF):
         rot = np.linalg.norm(omega * dt)
         mag = rot / dt
         if rot != 0:
-            omega_x = self.skewsymmetricmatrix(omega)
+            omega_x = skewsymmetricmatrix(omega)
             omega_x2 = omega_x @ omega_x
             psi = - np.identity(3) * dt + 0.5 * omega_x * dt**2 - 1/6 * omega_x2 * dt**3
         else:
@@ -301,22 +263,22 @@ class MEKF(EKF):
             omega_ = x[3:]
             return np.array([*0.25 * self.Bmatrix_mrp(sigma_).dot(omega_), *np.zeros(3)])
 
-        new_est = x_est + self.runge_kutta_4(mrp_dot, np.array([*x_est[:3], *(self.omega_state - x_est[3:6])]), step)
+        new_est = x_est + runge_kutta_4(mrp_dot, np.array([*x_est[:3], *(self.omega_state - x_est[3:6])]), step)
         if np.any(np.isnan(new_est)):
             print("nan")
         new_est[3:] = x_est[3:6]
         if np.linalg.norm(new_est[:3]) > 1:
-            new_est[:3] = self.get_shadow_set_mrp(new_est[:3])
+            new_est[:3] = get_shadow_set_mrp(new_est[:3])
         return new_est
 
     def attitude_discrete_q(self, current_quaternion, omega, step):
         def q_dot(x):
             x_quaternion_i2b = x
-            omega4 = self.omega4kinematics(omega)
+            omega4 = omega4kinematics(omega)
             q_dot = 0.5 * omega4 @ x_quaternion_i2b
             return q_dot
 
-        new_q = current_quaternion + self.runge_kutta_4(q_dot, current_quaternion, step)
+        new_q = current_quaternion + runge_kutta_4(q_dot, current_quaternion, step)
         new_q /= np.linalg.norm(new_q)
         return new_q
 
@@ -343,13 +305,13 @@ class MEKF(EKF):
 
     def get_observer_prediction_mrp(self, new_x_k, reference_vector):
         p_k = new_x_k[:3]
-        return self.dcm_from_mrp(p_k) @ reference_vector
+        return dcm_from_mrp(p_k) @ reference_vector
 
     def attitude_observer_model_mrp(self, new_x, vector_i):
         p_ = new_x[:3]
         H = np.zeros((3, 6))
         temp1 = 4 / (1 + np.linalg.norm(p_))**2
-        temp2 = skew(self.dcm_from_mrp(p_) @ vector_i)
+        temp2 = skew(dcm_from_mrp(p_) @ vector_i)
         temp3 = (1 + np.linalg.norm(p_)**2) * np.eye(3) - 2 * skew(p_) + 2 * np.outer(p_, p_)
         L = temp1 * temp2 @ temp3
         H[:3, :3] = L
@@ -369,7 +331,7 @@ class MEKF(EKF):
         new_x[:3] = add_mrp(correction[:3], new_x_k[:3])
         new_x[3:] = new_x_k[3:] + correction[3:]
         if np.linalg.norm(new_x[:3]) > 1:
-            new_x[:3] = self.get_shadow_set_mrp(new_x[:3])
+            new_x[:3] = get_shadow_set_mrp(new_x[:3])
         return new_x
 
     def update_state(self, new_x_k, z_k_medido, z_from_observer):
@@ -416,54 +378,6 @@ class MEKF(EKF):
         b_matrix[2, 1] = sigma[2] * sigma[1] + sigma[0]
         return b_matrix * 2
 
-    @staticmethod
-    def dcm_from_mrp(sigma):
-        """
-        N -> B
-        """
-        sigma2 = np.linalg.norm(sigma) ** 2
-        temp = 1 / (1 + sigma2) ** 2
-        c = 8 * skew(sigma).dot(skew(sigma)) - 4 * (1 - sigma2) * skew(sigma)
-        c *= temp
-        c += np.eye(3)
-        return c
-
-    @staticmethod
-    def get_shadow_set_mrp(sigma):
-        sigma_ = -sigma / np.linalg.norm(sigma) ** 2
-        return sigma_
-
-    @staticmethod
-    def runge_kutta_4(function, x, dt):
-        k1 = function(x)
-        xk2 = x + (dt / 2.0) * k1
-
-        k2 = function(xk2)
-        xk3 = x + (dt / 2.0) * k2
-
-        k3 = function(xk3)
-        xk4 = x + dt * k3
-
-        k4 = function(xk4)
-
-        next_x = (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
-        return next_x
-
-
-def get_mrp_from_q(q):
-    p = q[:3]/(1 + q[3])
-    if np.linalg.norm(p) > 1:
-        p = -p / np.linalg.norm(p) ** 2
-    return p
-
-
-def add_mrp(sigma_left, sigma_right):
-    snorm_l = 1 - np.linalg.norm(sigma_left) ** 2
-    snorm_r = 1 - np.linalg.norm(sigma_right) ** 2
-    new_sigma = snorm_r * sigma_left + snorm_l * sigma_right - 2 * np.cross(sigma_left, sigma_right)
-    new_sigma /= (1 + np.linalg.norm(sigma_left) ** 2 * np.linalg.norm(sigma_right) ** 2 - 2 * sigma_left.dot(sigma_right))
-    return new_sigma
-
 
 if __name__ == "__main__":
     import pandas as pd
@@ -483,7 +397,7 @@ if __name__ == "__main__":
 
     mrp_i2b_model = np.array([get_mrp_from_q(q_) for q_ in q_i2b_model])
     mrp_i2b_mag = np.linalg.norm(mrp_i2b_model, axis=1)
-    mag_from_mrp = np.array([MEKF.dcm_from_mrp(p_) @ mag_i_ for p_, mag_i_ in zip(mrp_i2b_model, mag_i_model)])
+    mag_from_mrp = np.array([dcm_from_mrp(p_) @ mag_i_ for p_, mag_i_ in zip(mrp_i2b_model, mag_i_model)])
     mag_from_q = np.array([Quaternions(q_).frame_conv(mag_i_) for q_, mag_i_ in zip(q_i2b_model, mag_i_model)])
 
     error_mrp = mean_squared_error(mag_b_model, mag_from_mrp)
@@ -578,10 +492,10 @@ if __name__ == "__main__":
 
     sigma_mrp = np.array([get_mrp_from_q(q_) for q_ in quat_est])
 
-    est_mag_b = [ekf_mrp.dcm_from_mrp(p_) @ mag_i_ for p_, mag_i_ in zip(sigma_mrp,
+    est_mag_b = [dcm_from_mrp(p_) @ mag_i_ for p_, mag_i_ in zip(sigma_mrp,
                                                                          mag_i_model)]
     est_mag_b = np.array(est_mag_b)
-    est_sun_b = [ekf_mrp.dcm_from_mrp(p_) @ sun_i_ for p_, sun_i_ in zip(sigma_mrp,
+    est_sun_b = [dcm_from_mrp(p_) @ sun_i_ for p_, sun_i_ in zip(sigma_mrp,
                                                                          sun_i_model)]
     est_sun_b = np.array(est_sun_b)
 
