@@ -6,17 +6,17 @@ email: els.obrq@gmail.com
 import numpy as np
 
 
-def runge_kutta_4(function, x, dt):
-    k1 = function(x)
+def runge_kutta_4(function, x, dt, *args):
+    k1 = function(x, args)
     xk2 = x + (dt / 2.0) * k1
 
-    k2 = function(xk2)
+    k2 = function(xk2, args)
     xk3 = x + (dt / 2.0) * k2
 
-    k3 = function(xk3)
+    k3 = function(xk3, args)
     xk4 = x + dt * k3
 
-    k4 = function(xk4)
+    k4 = function(xk4, args)
 
     next_x = (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
     return next_x
@@ -95,6 +95,31 @@ def dcm_from_mrp(sigma):
     return c
 
 
+
+# MRP
 def get_shadow_set_mrp(sigma):
     sigma_ = -sigma / np.linalg.norm(sigma) ** 2
     return sigma_
+
+
+def mrp_dot(x):
+    sigma_ = x[:3]
+    omega_ = x[3:]
+    return np.array([*0.25 * Bmatrix_mrp(sigma_).dot(omega_), *np.zeros(3)])
+
+
+def Bmatrix_mrp(sigma):
+    b_matrix = np.zeros((3, 3))
+    sigma2 = np.linalg.norm(sigma) ** 2
+    for i in range(3):
+        b_matrix[i, i] = (1 - sigma2 + 2 * sigma[i] ** 2) * 0.5
+
+    b_matrix[0, 1] = sigma[0] * sigma[1] - sigma[2]
+    b_matrix[0, 2] = sigma[0] * sigma[2] + sigma[1]
+
+    b_matrix[1, 0] = sigma[1] * sigma[0] + sigma[2]
+    b_matrix[1, 2] = sigma[1] * sigma[2] - sigma[0]
+
+    b_matrix[2, 0] = sigma[2] * sigma[0] - sigma[1]
+    b_matrix[2, 1] = sigma[2] * sigma[1] + sigma[0]
+    return b_matrix * 2

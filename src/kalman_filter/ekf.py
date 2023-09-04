@@ -258,11 +258,6 @@ class MEKF(EKF):
         return psi
 
     def attitude_discrete_mrp(self, x_est, u_ctrl, step):
-        def mrp_dot(x):
-            sigma_ = x[:3]
-            omega_ = x[3:]
-            return np.array([*0.25 * self.Bmatrix_mrp(sigma_).dot(omega_), *np.zeros(3)])
-
         new_est = x_est + runge_kutta_4(mrp_dot, np.array([*x_est[:3], *(self.omega_state - x_est[3:6])]), step)
         if np.any(np.isnan(new_est)):
             print("nan")
@@ -360,23 +355,6 @@ class MEKF(EKF):
         self.internal_state = np.zeros(6)
         self.historical['q'].append(self.current_quaternion)
         self.historical['b'].append(self.current_bias)
-
-    @staticmethod
-    def Bmatrix_mrp(sigma):
-        b_matrix = np.zeros((3, 3))
-        sigma2 = np.linalg.norm(sigma) ** 2
-        for i in range(3):
-            b_matrix[i, i] = (1 - sigma2 + 2 * sigma[i] ** 2) * 0.5
-
-        b_matrix[0, 1] = sigma[0] * sigma[1] - sigma[2]
-        b_matrix[0, 2] = sigma[0] * sigma[2] + sigma[1]
-
-        b_matrix[1, 0] = sigma[1] * sigma[0] + sigma[2]
-        b_matrix[1, 2] = sigma[1] * sigma[2] - sigma[0]
-
-        b_matrix[2, 0] = sigma[2] * sigma[0] - sigma[1]
-        b_matrix[2, 1] = sigma[2] * sigma[1] + sigma[0]
-        return b_matrix * 2
 
 
 if __name__ == "__main__":
