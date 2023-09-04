@@ -1,0 +1,666 @@
+"""
+Created by Elias Obreque
+els.obrq@gmail.com
+Date: 21-01-2023
+"""
+
+import numpy as np
+from ..dynamics.Quaternion import Quaternions
+from sklearn.metrics import mean_squared_error
+
+rev_day = 15.23166528
+w_orbit = np.array([0, - 2 * np.pi * rev_day / 86400, 0])
+
+
+class EKF:
+    def __init__(self, inertia, R, Q, P):
+        self.inertia = inertia
+        self.init_state_save = False
+        inv_inertia = np.linalg.inv(inertia)
+        self.inv_inertia = inv_inertia
+        self.kf_R = R
+        self.kf_Q = Q
+        self.dim_rows = len(R)
+        self.dim_cols = len(R[0])
+        self.kf_S = np.zeros([self.dim_rows, self.dim_cols])
+        self.kf_K = np.zeros([self.dim_rows, self.dim_cols])
+        self.covariance_P = P
+        self.internal_cov_P = self.covariance_P.copy()
+        self.state = np.zeros(len(self.covariance_P))
+        self.internal_state = self.state.copy()
+        self.current_measure = np.zeros(len(self.covariance_P))
+
+    def set_first_state(self, new_state):
+        self.state = new_state
+
+    def update(self, step, current_measure=None, reference=None):
+        new_x_k, new_P_k = self.get_prediction(self.state, self.covariance_P, step)
+        if current_measure is not None:
+            self.current_measure = current_measure
+            new_z_k = self.get_observer_prediction(new_x_k, reference)
+            self.update_covariance_matrix(new_x_k, new_P_k)
+            self.get_kalman_gain(new_x_k, new_P_k)
+            new_x = self.update_state(new_x_k, current_measure, new_z_k)
+            new_P = self.update_covariance_P_matrix(new_x_k, new_P_k)
+            self.state = new_x
+            self.covariance_P = new_P
+        else:
+            self.state = new_x_k
+            self.covariance_P = new_P_k
+
+    def propagate(self, step):
+        self.internal_state, self.internal_cov_P = self.get_prediction(self.state, self.covariance_P, step)
+
+    def inject_vector(self, vector_b, vector_i, sigma2):
+        self.kf_R = sigma2 * np.eye(len(vector_i))
+        new_z_k = self.get_observer_prediction(self.internal_state, vector_i)
+        print("residual error: {}".format(np.rad2deg(1) * np.arccos(vector_b @ new_z_k)))
+        H = self.attitude_observer_model(self.internal_state, vector_i)
+        self.update_covariance_matrix(H, self.internal_cov_P)
+        self.get_kalman_gain(H, self.internal_cov_P)
+        self.internal_state = self.update_state(self.internal_state, vector_b, new_z_k)
+        self.internal_cov_P = self.update_covariance_P_matrix(H, self.internal_cov_P)
+
+    def inject_vector_6(self, vector1_b, vector1_i, vector2_b, vector2_i, sigma1, sigma2):
+        self.kf_R = sigma2 * np.eye(6)
+        new_z_k1 = self.get_observer_prediction(self.internal_state, vector1_i)
+        new_z_k2 = self.get_observer_prediction(self.internal_state, vector2_i)
+        print("residual error 1: {}".format(np.rad2deg(1) * np.arccos(vector1_b @ new_z_k1)))
+        print("residual error 2: {}".format(np.rad2deg(1) * np.arccos(vector2_b @ new_z_k2)))
+        H1 = self.attitude_observer_model(self.internal_state, vector1_i)
+        H2 = self.attitude_observer_model(self.internal_state, vector2_i)
+        H = np.zeros((6, 6))
+        H[:3, :3] = H1[:3, :3]
+        H[3:, :3] = H2[:3, :3]
+        vector_b = np.array([*vector1_b, *vector2_b])
+        new_z_k = np.array([*new_z_k1, *new_z_k2])
+        self.update_covariance_matrix(H, self.internal_cov_P)
+        self.get_kalman_gain(H, self.internal_cov_P)
+        self.internal_state = self.update_state(self.internal_state, vector_b, new_z_k)
+        self.internal_cov_P = self.update_covariance_P_matrix(H, self.internal_cov_P)
+
+    def get_state(self):
+        return self.state
+
+    def reset_state(self):
+        self.state = self.internal_state
+        self.covariance_P = self.internal_cov_P
+
+    def get_internal_state(self):
+        return self.internal_state
+
+    def get_prediction(self, x_est, P_est, step, u_ctrl=np.zeros(3)):
+        new_x_k = self.attitude_discrete_model(x_est, u_ctrl, step)
+        f_1 = self.attitude_jacobian_model(x_est, step)
+        p1 = f_1.dot(P_est).dot(f_1.T)
+        l_1 = self.noise_jacobian_model(x_est, step)
+        p2 = l_1.dot(self.kf_Q).dot(l_1.T)
+        new_P_k = p1 + p2
+        return new_x_k, new_P_k
+
+    def get_observer_prediction(self, new_x_k, reference_vector):
+        z_k = self.attitude_observer_model(new_x_k, reference_vector) @ reference_vector
+        return z_k
+
+    def update_covariance_matrix(self, H, new_P_k):
+        if np.any(np.isnan(H)):
+            print("H - NAN")
+        self.kf_S = H @ (new_P_k @ H.T) + self.kf_R
+
+    def get_kalman_gain(self, H, new_P_k):
+        if len(self.kf_S) > 1:
+            try:
+                s_inv = np.linalg.inv(self.kf_S)
+            except Exception as error:
+                print("{}: {}".format(error, self.kf_S))
+                s_inv = np.zeros_like(self.kf_S)
+            self.kf_K = new_P_k @ H.T @ s_inv
+        else:
+            s_inv = 1/self.kf_S
+            self.kf_K = new_P_k.dot(H.T) * s_inv
+
+    def update_state(self, new_x_k, z_k_medido, z_from_observer):
+        new_x = new_x_k + self.kf_K.dot(z_k_medido - z_from_observer)
+        new_x[:3] = new_x[:3] / np.linalg.norm(new_x[:3])
+        return new_x
+
+    def update_covariance_P_matrix(self, H, new_P_k):
+        I_nn = np.eye(len(self.state))
+        new_P = (I_nn - self.kf_K @ H) @ new_P_k @ (I_nn - self.kf_K @ H).T #+ self.kf_K @ self.kf_R @ self.kf_K.T
+        return new_P
+
+    def attitude_observer_model(self, new_x, vector_i) -> np.array:
+        pass
+
+    def attitude_discrete_model(self, x, torque_b, dt) -> np.array:
+        pass
+
+    def attitude_jacobian_model(self, x, dt) -> np.array:
+        pass
+
+    def noise_jacobian_model(self, x, dt) -> np.array:
+        pass
+
+    @staticmethod
+    def skewsymmetricmatrix(x_omega_b):
+        S_omega = np.zeros((3, 3))
+        S_omega[1, 0] = x_omega_b[2]
+        S_omega[2, 0] = -x_omega_b[1]
+
+        S_omega[0, 1] = -x_omega_b[2]
+        S_omega[0, 2] = x_omega_b[1]
+
+        S_omega[2, 1] = x_omega_b[0]
+        S_omega[1, 2] = -x_omega_b[0]
+        return S_omega
+
+    @staticmethod
+    def omega4kinematics(x_omega_b):
+        Omega = np.zeros((4,4))
+        Omega[1, 0] = -x_omega_b[2]
+        Omega[2, 0] = x_omega_b[1]
+        Omega[3, 0] = -x_omega_b[0]
+
+        Omega[0, 1] = x_omega_b[2]
+        Omega[0, 2] = -x_omega_b[1]
+        Omega[0, 3] = x_omega_b[0]
+
+        Omega[1, 2] = x_omega_b[0]
+        Omega[1, 3] = x_omega_b[1]
+
+        Omega[2, 1] = -x_omega_b[0]
+        Omega[2, 3] = x_omega_b[2]
+
+        Omega[3, 1] = -x_omega_b[1]
+        Omega[3, 2] = -x_omega_b[2]
+        return Omega
+
+
+def skew(x):
+    return np.array([[0, -x[2], x[1]],
+                     [x[2], 0, -x[0]],
+                     [-x[1], x[0], 0]])
+
+
+class MEKF(EKF):
+    # https://ntrs.nasa.gov/api/citations/19960035754/downloads/19960035754.pdf
+    """
+    modified Rogriguez parameters and gyro bias correction
+    p = MRP
+    b = bias
+
+        def update(self, step, current_measure=None):
+            new_x_k, new_P_k = self.get_prediction(self.state, self.covariance_P, step)
+
+            if current_measure is not None:
+                self.current_measure = current_measure
+                new_z_k = self.get_observer_prediction(new_x_k)
+                self.update_covariance_matrix(new_P_k)
+                self.get_kalman_gain(new_x_k, new_P_k)
+                new_x = self.update_state(new_x_k, current_measure, new_z_k)
+                new_P = self.update_covariance_P_matrix(new_P_k)
+                self.state = new_x
+                self.covariance_P = new_P
+            else:
+                self.state = new_x_k
+                self.covariance_P = new_P_k
+            return
+    """
+
+    def __init__(self, inertia, R, Q, P):
+        super().__init__(inertia, R, Q, P)
+        self.current_measure = np.zeros(3)
+        self.omega_state = np.zeros(3)
+        self.reference_vector = np.zeros(3)
+        self.current_quaternion = np.zeros(4)
+        self.current_bias = np.zeros(3)
+        self.sigma_v = 0
+        self.sigma_u = 0
+        self.historical = {'q': [], 'b': [np.zeros(3)]}
+
+    def add_reference_vector(self, vector):
+        self.reference_vector = vector
+
+    def set_gyro_measure(self, value):
+        self.omega_state = value
+
+    def set_quat(self, value, save=False):
+        value = value / np.linalg.norm(value)
+        self.current_quaternion = value
+        if save:
+            self.historical['q'].append(self.current_quaternion)
+
+    def get_prediction(self, x_est, P_est, step, u_ctrl=np.zeros(3), measure=None):
+        # new_x_k = self.attitude_discrete_mrp(x_est, u_ctrl, step)
+        # quat
+        omega = self.omega_state - self.current_bias
+        self.current_quaternion = self.attitude_discrete_q(self.current_quaternion, omega, step)
+        new_x_k = np.zeros(6)
+        new_P_k = self.propagate_cov_P_sim(step, omega)
+        return new_x_k, new_P_k
+
+    def propagate_cov_P_sim(self, step, omega):
+        f_x = np.zeros((6, 6))
+        f_x[:3, :3] = -skew(omega)
+        f_x[:3, 3:] = -np.identity(3)
+
+        self.kf_Q[:3, :3] = np.identity(3) * (self.sigma_v ** 2 * step + 1/3 * self.sigma_u ** 2 * step ** 3)
+        self.kf_Q[3:, 3:] = np.identity(3) * self.sigma_u ** 2 * step
+        phi = (np.eye(6) + f_x) * step
+        new_p_k = phi.dot(self.covariance_P).dot(phi.T) + self.kf_Q
+        return new_p_k
+
+    def propagate_cov_P(self, step, omega):
+        F_x = np.zeros((6, 6))
+        F_x[:3, :3] = self.get_discrete_theta(step, omega)
+        F_x[:3, 3:] = self.get_discrete_psi(step, omega)
+        F_x[3:, 3:] = np.identity(3)
+
+        u_x = skew(omega)
+        self.kf_Q[:3, :3] = np.identity(3) * (self.sigma_v ** 2 * step + 1/3 * self.sigma_u ** 2 * step ** 3)
+        self.kf_Q[3:, :3] = - np.identity(3) * 0.5 * self.sigma_u ** 2 * step ** 2
+        self.kf_Q[:3, 3:] = - np.identity(3) * 0.5 * self.sigma_u ** 2 * step ** 2
+        self.kf_Q[3:, 3:] = np.identity(3) * self.sigma_u ** 2 * step
+        new_p_k = F_x @ self.covariance_P @ F_x.T + F_x @ self.kf_Q @ F_x.T
+        return new_p_k
+
+    def propagate_cov_P_dep(self, x_est, step, p_est_):
+        f_ = self.attitude_jacobian_model(x_est, step)
+        p1 = f_.dot(p_est_.dot(f_.T))
+        g_ = self.noise_jacobian_model(x_est, step)
+        p2 = g_.dot(self.kf_Q).dot(g_.T)
+        p_ = p1 + p2
+        new_P_k_ = p_ * step
+        return new_P_k_
+
+    def get_discrete_theta(self, dt, omega):
+        rot = np.linalg.norm(omega * dt)
+        mag = rot/dt
+        if rot != 0:
+            u_x = self.skewsymmetricmatrix(omega)
+            u_x2 = u_x @ u_x
+            theta = np.identity(3) - u_x * dt + 0.5 * u_x2 * dt**2
+        else:
+            theta = np.identity(3)
+        return theta
+
+    def get_discrete_psi(self, dt, omega):
+        rot = np.linalg.norm(omega * dt)
+        mag = rot / dt
+        if rot != 0:
+            omega_x = self.skewsymmetricmatrix(omega)
+            omega_x2 = omega_x @ omega_x
+            psi = - np.identity(3) * dt + 0.5 * omega_x * dt**2 - 1/6 * omega_x2 * dt**3
+        else:
+            psi = - np.identity(3) * dt
+        return psi
+
+    def attitude_discrete_mrp(self, x_est, u_ctrl, step):
+        def mrp_dot(x):
+            sigma_ = x[:3]
+            omega_ = x[3:]
+            return np.array([*0.25 * self.Bmatrix_mrp(sigma_).dot(omega_), *np.zeros(3)])
+
+        new_est = x_est + self.runge_kutta_4(mrp_dot, np.array([*x_est[:3], *(self.omega_state - x_est[3:6])]), step)
+        if np.any(np.isnan(new_est)):
+            print("nan")
+        new_est[3:] = x_est[3:6]
+        if np.linalg.norm(new_est[:3]) > 1:
+            new_est[:3] = self.get_shadow_set_mrp(new_est[:3])
+        return new_est
+
+    def attitude_discrete_q(self, current_quaternion, omega, step):
+        def q_dot(x):
+            x_quaternion_i2b = x
+            omega4 = self.omega4kinematics(omega)
+            q_dot = 0.5 * omega4 @ x_quaternion_i2b
+            return q_dot
+
+        new_q = current_quaternion + self.runge_kutta_4(q_dot, current_quaternion, step)
+        new_q /= np.linalg.norm(new_q)
+        return new_q
+
+    def attitude_jacobian_model(self, x_est, step):
+        f_ = np.zeros((6, 6))
+        p = x_est[:3]
+        gyro_measure = self.omega_state
+        omega = gyro_measure - self.current_bias
+        f_p = 0.5 * (np.multiply(p, omega.reshape(-1, 1)) - np.multiply(omega, p.reshape(-1, 1)) -
+                     skew(omega) + omega.dot(p) * np.eye(3))
+        f_b = - 0.5 * self.Bmatrix_mrp(x_est[:3])
+        f_[:3, :3] = f_p
+        f_[:3, 3:] = f_b
+        return f_
+
+    def noise_jacobian_model(self, x_est, step):
+        g_ = np.zeros((6, 6))
+        g_[:3, :3] = - 0.25 * self.Bmatrix_mrp(x_est[:3])
+        g_[3:, 3:] = np.eye(3)
+        return g_
+
+    def get_observer_prediction(self, new_x_k, reference_vector):
+        return Quaternions(self.current_quaternion).frame_conv(reference_vector)
+
+    def get_observer_prediction_mrp(self, new_x_k, reference_vector):
+        p_k = new_x_k[:3]
+        return self.dcm_from_mrp(p_k) @ reference_vector
+
+    def attitude_observer_model_mrp(self, new_x, vector_i):
+        p_ = new_x[:3]
+        H = np.zeros((3, 6))
+        temp1 = 4 / (1 + np.linalg.norm(p_))**2
+        temp2 = skew(self.dcm_from_mrp(p_) @ vector_i)
+        temp3 = (1 + np.linalg.norm(p_)**2) * np.eye(3) - 2 * skew(p_) + 2 * np.outer(p_, p_)
+        L = temp1 * temp2 @ temp3
+        H[:3, :3] = L
+        return H
+
+    def attitude_observer_model(self, new_x, vector_i):
+        H = np.zeros((3, 6))
+        H[:3, :3] = skew(Quaternions(self.current_quaternion).frame_conv(vector_i))
+        return H
+
+    def update_state_mrp(self, new_x_k, z_k_medido, z_from_observer):
+        new_x = np.zeros(6)
+        error = z_k_medido - z_from_observer
+        correction = self.kf_K @ error
+        if np.any(np.isnan(correction)):
+            print("correction: {}".format(correction))
+        new_x[:3] = add_mrp(correction[:3], new_x_k[:3])
+        new_x[3:] = new_x_k[3:] + correction[3:]
+        if np.linalg.norm(new_x[:3]) > 1:
+            new_x[:3] = self.get_shadow_set_mrp(new_x[:3])
+        return new_x
+
+    def update_state(self, new_x_k, z_k_medido, z_from_observer):
+        error = z_k_medido - z_from_observer
+        correction = self.kf_K @ error
+        if np.any(np.isnan(correction)):
+            print("correction: {}".format(correction))
+        new_x = new_x_k + correction
+        return new_x
+
+    def reset_state(self):
+        dot_error = self.internal_state[:3] @ self.internal_state[:3]
+        if dot_error < 1:
+            error_q = Quaternions(np.array([*self.internal_state[:3] * 0.5,
+                                            np.sqrt(1 - dot_error)]))
+        else:
+            error_q = Quaternions(np.array([*self.internal_state[:3] * 0.5, 1]) / np.sqrt(1 + dot_error))
+        error_q.normalize()
+        # diff = error_q * Quaternions(self.current_quaternion)
+        current_quaternion = error_q * Quaternions(self.current_quaternion)
+        current_quaternion.normalize()
+        self.current_quaternion = current_quaternion()
+        self.current_bias += self.internal_state[3:]
+        self.covariance_P = self.internal_cov_P
+        self.state = np.zeros(6)
+        self.internal_state = np.zeros(6)
+        self.historical['q'].append(self.current_quaternion)
+        self.historical['b'].append(self.current_bias)
+
+    @staticmethod
+    def Bmatrix_mrp(sigma):
+        b_matrix = np.zeros((3, 3))
+        sigma2 = np.linalg.norm(sigma) ** 2
+        for i in range(3):
+            b_matrix[i, i] = (1 - sigma2 + 2 * sigma[i] ** 2) * 0.5
+
+        b_matrix[0, 1] = sigma[0] * sigma[1] - sigma[2]
+        b_matrix[0, 2] = sigma[0] * sigma[2] + sigma[1]
+
+        b_matrix[1, 0] = sigma[1] * sigma[0] + sigma[2]
+        b_matrix[1, 2] = sigma[1] * sigma[2] - sigma[0]
+
+        b_matrix[2, 0] = sigma[2] * sigma[0] - sigma[1]
+        b_matrix[2, 1] = sigma[2] * sigma[1] + sigma[0]
+        return b_matrix * 2
+
+    @staticmethod
+    def dcm_from_mrp(sigma):
+        """
+        N -> B
+        """
+        sigma2 = np.linalg.norm(sigma) ** 2
+        temp = 1 / (1 + sigma2) ** 2
+        c = 8 * skew(sigma).dot(skew(sigma)) - 4 * (1 - sigma2) * skew(sigma)
+        c *= temp
+        c += np.eye(3)
+        return c
+
+    @staticmethod
+    def get_shadow_set_mrp(sigma):
+        sigma_ = -sigma / np.linalg.norm(sigma) ** 2
+        return sigma_
+
+    @staticmethod
+    def runge_kutta_4(function, x, dt):
+        k1 = function(x)
+        xk2 = x + (dt / 2.0) * k1
+
+        k2 = function(xk2)
+        xk3 = x + (dt / 2.0) * k2
+
+        k3 = function(xk3)
+        xk4 = x + dt * k3
+
+        k4 = function(xk4)
+
+        next_x = (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
+        return next_x
+
+
+def get_mrp_from_q(q):
+    p = q[:3]/(1 + q[3])
+    if np.linalg.norm(p) > 1:
+        p = -p / np.linalg.norm(p) ** 2
+    return p
+
+
+def add_mrp(sigma_left, sigma_right):
+    snorm_l = 1 - np.linalg.norm(sigma_left) ** 2
+    snorm_r = 1 - np.linalg.norm(sigma_right) ** 2
+    new_sigma = snorm_r * sigma_left + snorm_l * sigma_right - 2 * np.cross(sigma_left, sigma_right)
+    new_sigma /= (1 + np.linalg.norm(sigma_left) ** 2 * np.linalg.norm(sigma_right) ** 2 - 2 * sigma_left.dot(sigma_right))
+    return new_sigma
+
+
+if __name__ == "__main__":
+    import pandas as pd
+    import matplotlib.pyplot as plt
+
+    NOISE = True
+
+    inertia = np.array([[38478.678, 0, 0], [0, 38528.678, 0], [0, 0, 6873.717]]) * 1e-6
+    model_data = pd.read_csv("spacecraft_52191U_dataset.csv")
+    time_model = model_data['time[sec]'].values - model_data['time[sec]'].values[0]
+    mag_i_model = model_data[['mag_x_i[nT]', 'mag_y_i[nT]', 'mag_z_i[nT]']].values
+    mag_b_model = model_data[['mag_x_b[nT]', 'mag_y_b[nT]', 'mag_z_b[nT]']].values
+    gyro_b_model = model_data[['omega_t_b(X)[rad/s]', 'omega_t_b(Y)[rad/s]', 'omega_t_b(Z)[rad/s]']].values
+    q_i2b_model = model_data[['q_t_i2b(0)[-]', 'q_t_i2b(1)[-]', 'q_t_i2b(2)[-]', 'q_t_i2b(3)[-]']].values
+    sun_i_model = model_data[['Sun_pos_from_sc_i(X)[m]', 'Sun_pos_from_sc_i(Y)[m]', 'Sun_pos_from_sc_i(Z)[m]']].values
+    sun_b_model = model_data[['Sun_pos_from_sc_b(X)[m]', 'Sun_pos_from_sc_b(Y)[m]', 'Sun_pos_from_sc_b(Z)[m]']].values
+
+    mrp_i2b_model = np.array([get_mrp_from_q(q_) for q_ in q_i2b_model])
+    mrp_i2b_mag = np.linalg.norm(mrp_i2b_model, axis=1)
+    mag_from_mrp = np.array([MEKF.dcm_from_mrp(p_) @ mag_i_ for p_, mag_i_ in zip(mrp_i2b_model, mag_i_model)])
+    mag_from_q = np.array([Quaternions(q_).frame_conv(mag_i_) for q_, mag_i_ in zip(q_i2b_model, mag_i_model)])
+
+    error_mrp = mean_squared_error(mag_b_model, mag_from_mrp)
+    error_quat = mean_squared_error(mag_b_model, mag_from_q)
+
+    print(error_mrp, error_quat)
+
+    if NOISE:
+        mag_b_sensor = mag_b_model + np.random.normal(0, 0.01 * np.mean(
+            np.linalg.norm(mag_i_model, axis=1)) * np.ones_like(mag_b_model))
+        sun_b_sensor = sun_b_model + np.random.normal(0, 0.01 * np.mean(
+            np.linalg.norm(sun_b_model, axis=1)) * np.ones_like(sun_b_model))
+        gyro_b_sensor = gyro_b_model + np.random.normal(0, 0.03 * np.pi / 180 * np.ones_like(gyro_b_model))
+        # gyro_b_sensor += (np.array([15, -15, 10]) * np.deg2rad(1))
+        sd_k_mag = .06 ** 2
+        sd_k_sun = .06 ** 2
+        sd_q = 0.03 * np.deg2rad(1)
+        sd_p = 1.0
+        sd_u = 0.001
+        sd_v = 0.001
+    else:
+        mag_b_sensor = mag_b_model.copy()
+        gyro_b_sensor = gyro_b_model.copy()
+        sun_b_sensor = sun_b_model.copy()
+        sd_k_mag = 0.01 ** 2
+        sd_k_sun = 0.01 ** 2
+        sd_q = 0.03 * np.deg2rad(1)
+        sd_p = 0.5
+        sd_u = 0.001
+        sd_v = 0.001
+
+    dt = 0.1
+    ct = 0
+    hist_state = []
+    k = 1
+    P_k = np.diag(np.array([0.5, 0.5, 0.5, 0.01, 0.01, 0.01]))
+    # P_k = np.random.normal(0, sd_p, size=(6, 6))
+    tend = time_model[-1]
+
+    ekf_mrp = MEKF(inertia, R=np.eye(3) * 0.0, Q=np.eye(6) * sd_q, P=P_k)
+    ekf_mrp.set_first_state(np.zeros(6))
+    ekf_mrp.set_gyro_measure(gyro_b_sensor[0])
+    ekf_mrp.set_quat(q_i2b_model[0] + np.random.normal(0, 0.2, size=4) * float(NOISE), save=True)
+    ekf_mrp.sigma_u = 0.0 if not NOISE else sd_u
+    ekf_mrp.sigma_v = 0.0 if not NOISE else sd_v
+
+    hist_cov_P = [P_k.flatten()]
+    hist_state.append(ekf_mrp.get_state())
+    count_omega = 1
+    measure_cycle_omega = 0.1 / dt
+    count_idx_omega = 1
+    fixed_vector = np.array([Quaternions(q_).frame_conv(np.array([1, 0, 0])) for q_ in q_i2b_model])
+    while ct <= tend:
+        print("time: {}".format(ct))
+        # EKF prediction
+        ekf_mrp.propagate(dt)
+        if count_omega % measure_cycle_omega == 0:
+            # mag injection
+            ekf_mrp.inject_vector(mag_b_sensor[k] / np.linalg.norm(mag_b_sensor[k]),
+                                  mag_i_model[k] / np.linalg.norm(mag_i_model[k]),
+                                  sigma2=sd_k_mag)
+            # # sun injection
+            ekf_mrp.inject_vector(sun_b_sensor[k] / np.linalg.norm(sun_b_sensor[k]),
+                                  sun_i_model[k] / np.linalg.norm(sun_i_model[k]),
+                                  sigma2=sd_k_sun)
+            # fixed
+            # ekf_mrp.inject_vector_6(mag_b_sensor[k] / np.linalg.norm(mag_b_sensor[k]),
+            #                         mag_i_model[k] / np.linalg.norm(mag_i_model[k]),
+            #                         sun_b_model[k] / np.linalg.norm(sun_b_model[k]),
+            #                         sun_i_model[k] / np.linalg.norm(sun_i_model[k]),
+            #                         sigma1=sd_k_mag,
+            #                         sigma2=sd_k_sun)
+            # ekf_mrp.inject_vector(fixed_vector[k] / np.linalg.norm(fixed_vector[k]),
+            #                       np.array([1, 0, 0]),
+            #                       sigma2=sd_k_sun)
+            ekf_mrp.reset_state()
+
+            count_omega = 1
+            ekf_mrp.set_gyro_measure(gyro_b_sensor[k])
+            # ekf_mrp.set_quat(q_i2b_model[k])
+            k += 1
+        count_omega += 1
+        ct += dt
+        ct = np.round(ct, 4)
+        hist_state.append(ekf_mrp.get_state())
+        hist_cov_P.append(ekf_mrp.covariance_P.flatten())
+
+    # bias_est = np.array([elem[3:] for elem in hist_state])
+    # sigma_mrp = np.array([elem[:3] for elem in hist_state])
+    bias_est = np.array(ekf_mrp.historical['b'])
+    quat_est = np.array(ekf_mrp.historical['q'])
+
+    sigma_mrp = np.array([get_mrp_from_q(q_) for q_ in quat_est])
+
+    est_mag_b = [ekf_mrp.dcm_from_mrp(p_) @ mag_i_ for p_, mag_i_ in zip(sigma_mrp,
+                                                                         mag_i_model)]
+    est_mag_b = np.array(est_mag_b)
+    est_sun_b = [ekf_mrp.dcm_from_mrp(p_) @ sun_i_ for p_, sun_i_ in zip(sigma_mrp,
+                                                                         sun_i_model)]
+    est_sun_b = np.array(est_sun_b)
+
+    plt.figure()
+    plt.plot(time_model, hist_cov_P)
+    plt.grid()
+
+    error_quat = np.array([(Quaternions(q_t) * Quaternions(Quaternions(q_e).conjugate()))()
+                          for q_t, q_e in zip(q_i2b_model, quat_est)])
+    error_theta = 2 * np.arccos(error_quat[:, 3])
+    error_theta[error_theta > np.pi] = 2 * np.pi - error_theta[error_theta > np.pi]
+
+    plt.figure()
+    plt.plot(time_model, mrp_i2b_mag - np.linalg.norm(sigma_mrp, axis=1), label='error')
+    plt.legend()
+    plt.grid()
+
+    plt.figure()
+    plt.plot(time_model, error_theta * np.rad2deg(1), '.', label='error theta')
+    plt.legend()
+    plt.grid()
+
+    plt.figure()
+    plt.plot(time_model, bias_est, label=['bx', 'by', 'bz'])
+    plt.legend()
+
+    plt.figure()
+    plt.plot(est_mag_b, ls='--', label='est')
+    plt.plot(mag_b_sensor[:len(sigma_mrp)], label='sensor')
+    plt.legend()
+
+    plt.figure()
+    plt.plot(est_sun_b, ls='--', label='sun est')
+    plt.plot(sun_b_model[:len(sigma_mrp)], label='sun')
+    plt.legend()
+
+    fig_, ax = plt.subplots(3, 1)
+    ax[0].plot(time_model, mrp_i2b_model[:, 0], label=['sx'])
+    ax[0].plot(time_model, sigma_mrp[:, 0], label=['kf sx'])
+    ax[1].plot(time_model, mrp_i2b_model[:, 1], label=['sy'])
+    ax[1].plot(time_model, sigma_mrp[:, 1], label=['kf sy'])
+    ax[2].plot(time_model, mrp_i2b_model[:, 2], label=['sz'])
+    ax[2].plot(time_model, sigma_mrp[:, 2], label=['kf sz'])
+    plt.legend()
+
+    fig_q, axq = plt.subplots(4, 1)
+    axq[0].plot(time_model, q_i2b_model[:, 0], label=['qx'])
+    axq[0].plot(time_model, quat_est[:, 0], label=['kf qx'])
+    axq[1].plot(time_model, q_i2b_model[:, 1], label=['qy'])
+    axq[1].plot(time_model, quat_est[:, 1], label=['kf qy'])
+    axq[2].plot(time_model, q_i2b_model[:, 2], label=['qz'])
+    axq[2].plot(time_model, quat_est[:, 2], label=['kf qz'])
+    axq[3].plot(time_model, q_i2b_model[:, 3], label=['qs'])
+    axq[3].plot(time_model, quat_est[:, 3], label=['kf qs'])
+    plt.legend()
+
+    plt.figure()
+    plt.plot(time_model, mrp_i2b_mag, ls='dotted', label='mrp true')
+    plt.plot(time_model, np.linalg.norm(sigma_mrp, axis=1), label='mrp est')
+    plt.legend()
+    plt.show()
+
+    plt.figure()
+    plt.plot(time_model, mrp_i2b_model, label=['sx', 'sy', 'sz'], lw=0.7)
+    plt.plot(time_model, mrp_i2b_mag, label='Magnitude', lw=1.2, color='red')
+    plt.legend()
+
+    plt.figure()
+    plt.plot(time_model, gyro_b_model, label=['omega_x_i', 'omega_y_i', 'omega_z_i'])
+    plt.plot(time_model, gyro_b_sensor, label=['gyro_x_i', 'gyro_y_i', 'gyro_z_i'])
+    plt.legend()
+
+    plt.figure()
+    plt.plot(time_model, mag_i_model, label=['mag_x_i', 'mag_y_i', 'mag_z_i'])
+    plt.plot(time_model, mag_b_model, label=['mag_x_b', 'mag_y_b', 'mag_z_b'])
+    plt.legend()
+
+    plt.figure()
+    plt.plot(time_model, mag_b_model, label=['mag_x_b', 'mag_y_b', 'mag_z_b'])
+    plt.plot(time_model, mag_b_sensor, label=['mag_x_b_s', 'mag_y_b_s', 'mag_z_b_s'])
+    plt.legend()
+    plt.show()
