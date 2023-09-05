@@ -6,7 +6,7 @@ email: els.obrq@gmail.com
 import matplotlib.pyplot as plt
 from scipy.cluster.hierarchy import dendrogram
 from sklearn.cluster import AgglomerativeClustering
-from sklearn.datasets import load_iris
+from src.dynamics.tools import *
 import pandas as pd
 import numpy as np
 import datetime
@@ -19,22 +19,35 @@ jd2022 = 2459580.50000
 class RealData:
     def __init__(self, file_directory):
         # Real data
-        self.sensor_data = pd.read_excel(file_directory)
-        self.sensor_data.sort_values(by=['timestamp'], inplace=True)
-        self.sensor_data.dropna(inplace=True)
-        self.sensor_data['jd'] = self.sensor_data['timestamp'].values / 86400 - ts2022 + jd2022
+        self.data = pd.read_excel(file_directory)
+        self.data.sort_values(by=['timestamp'], inplace=True)
+        self.data.dropna(inplace=True)
+        self.data['jd'] = [timestamp_to_julian(ts) for ts in self.data['timestamp'].values]
 
     def create_datetime_from_timestamp(self, time_format):
-        self.sensor_data['DateTime'] = [datetime.datetime.fromtimestamp(ts).strftime(time_format)
-                                        for ts in self.sensor_data['timestamp']]
+        self.data['DateTime'] = [datetime.datetime.fromtimestamp(ts).strftime(time_format)
+                                 for ts in self.data['timestamp']]
 
     def plot_key(self, to_plot: list, show: bool = False):
-        self.sensor_data[to_plot].plot()
+        self.data[to_plot].plot()
         plt.show() if show else None
 
+    def search_nearly_tle(self):
+        jd_init = self.data['jd'].values[0]
+        jd_end = self.data['jd'].values[-1]
+        tle_file = open("data/sat000052191.txt")
+        tle_info = tle_file.readlines()
+        tle_epoch = [tle_info_.split(" ")[4] for tle_info_ in tle_info[1::3]]
+        tle_jd = [tle_epoch_to_julian(tle_epoch_) for tle_epoch_ in tle_epoch]
+        idx_ = np.argmin(np.abs(tle_jd - jd_init))
+        line1 = tle_info[1::3][idx_]
+        line2 = tle_info[2::3][idx_]
+        print(line1, line2)
+        return line1, line2
+
     def calibrate_mag(self, scale: np.array = None, bias: np.array = None):
-        self.sensor_data[['mag_x', 'mag_y', 'mag_z']] = np.matmul(self.sensor_data[['mag_x', 'mag_y', 'mag_z']],
-                                                                  (np.eye(3) + scale)) - bias
+        self.data[['mag_x', 'mag_y', 'mag_z']] = np.matmul(self.data[['mag_x', 'mag_y', 'mag_z']],
+                                                           (np.eye(3) + scale)) - bias
 
     def set_window_time(self, start_str=None, stop_str=None, format_time=None):
         if start_str is None and stop_str is None and format_time is None:
@@ -43,12 +56,12 @@ class RealData:
             model = self.get_windows_time(n_c=n_c)
             selected_cluster = int(input("Set the number of cluster to set window time: "))
             temp = np.argwhere(model.labels_ == selected_cluster)
-            self.sensor_data = self.sensor_data.iloc[list(temp.T)[0]]
+            self.data = self.data.iloc[list(temp.T)[0]]
         else:
             init = datetime.datetime.strptime(start_str, format_time).timestamp()
             stop = datetime.datetime.strptime(stop_str, format_time).timestamp()
-            temp = np.argwhere((init <= self.sensor_data['timestamp']) & (self.sensor_data['timestamp'] <= stop))
-            self.sensor_data = self.sensor_data.iloc[list(temp.T)[0]]
+            temp = np.argwhere((init <= self.data['timestamp']) & (self.data['timestamp'] <= stop))
+            self.data = self.data.iloc[list(temp.T)[0]]
 
     def plot_dendrogram_time(self, timestamp_distance: float = 3600):
         """
@@ -60,7 +73,7 @@ class RealData:
         # setting distance_threshold=0 ensures we compute the full tree.
         model = AgglomerativeClustering(distance_threshold=timestamp_distance, n_clusters=None)
 
-        model = model.fit(self.sensor_data['timestamp'].values.reshape(-1, 1))
+        model = model.fit(self.data['timestamp'].values.reshape(-1, 1))
         plt.title("Hierarchical Clustering Dendrogram")
         # plot the top three levels of the dendrogram
         plot_dendrogram(model, truncate_mode="level", p=5)
@@ -69,11 +82,12 @@ class RealData:
 
     def get_windows_time(self, n_c = 2):
         model = KMeans(n_clusters=n_c)
-        model.fit(self.sensor_data['timestamp'].values.reshape(-1, 1))
+        model.fit(self.data['timestamp'].values.reshape(-1, 1))
         for i in range(n_c):
-            temp = self.sensor_data['DateTime'].values[np.argwhere(model.labels_ == i)]
+            temp = self.data['DateTime'].values[np.argwhere(model.labels_ == i)]
             print(f"Cluster {i}: Start: {temp[0]} - Stop: {temp[-1]}")
         return model
+
 
 def plot_dendrogram(model, **kwargs):
     # Create linkage matrix and then plot the dendrogram

@@ -57,9 +57,14 @@ class Quaternions(object):
         return Quaternions(temp)
 
     @staticmethod
-    def get_from_two_v(u, v):
+    def get_from_two_v(u: np.array, v: np.array):
+        u = u / np.linalg.norm(u)
+        v = v / np.linalg.norm(v)
         p_ = np.cross(u, v)
-        p_ /= np.linalg.norm(p_)
+        if np.linalg.norm(p_) > 1e-9:
+            p_ /= np.linalg.norm(p_)
+        else:
+            p_ = np.zeros(3)
         ang_ = u @ v
         ang_ = np.arccos(ang_)
         # p_ *= np.tan(np.arccos(ang_))

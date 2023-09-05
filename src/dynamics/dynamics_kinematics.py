@@ -6,11 +6,10 @@ email: els.obrq@gmail.com
 import pandas as pd
 from sgp4.api import Satrec
 from sgp4.api import WGS84
-from Quaternion import Quaternions
-from tools import *
+from .Quaternion import Quaternions
+from .tools import *
 import numpy as np
 
-re = 6378.137  # km
 RAD2DEG = 180 / np.pi
 DEG2RAD = 1 / RAD2DEG
 au = 149597870.691  # km
@@ -19,7 +18,7 @@ radius_earth = 6378.137  # km
 earth_flat = 1.0 / 298.257223563
 earth_e2 = earth_flat * (2 - earth_flat)
 geod_tolerance = 1e-10  # rad
-
+mu = 3.986005e14  # in m3 / s2
 inertia = np.array([[38478.678, 0, 0], [0, 38528.678, 0], [0, 0, 6873.717]]) * 1e-6
 inv_inertia = np.linalg.inv(inertia)
 
@@ -44,6 +43,29 @@ def calc_sat_pos_i(l1: list, l2: list, jd: float):
     satellite = Satrec.twoline2rv(l1, l2, WGS84)
     _, pos, vel = satellite.sgp4(int(jd), jd % 1)
     return pos, vel
+
+
+def calc_geod_lat_lon_alt(pos, c_jd):
+    current_sideral = gstime(c_jd)
+    r = np.sqrt(pos[0] ** 2 + pos[1] ** 2)
+
+    long = fmod2(np.arctan2(pos[1], pos[0]) - current_sideral)
+    lat = np.arctan2(pos[2], r)
+
+    flag_iteration = True
+
+    while flag_iteration:
+        phi = lat
+        c = 1 / np.sqrt(1 - earth_e2 * np.sin(phi) * np.sin(phi))
+        lat = np.arctan2(pos[2] + radius_earth * c
+                         * earth_e2 * np.sin(phi) * 1000, r)
+        if (np.abs(lat - phi)) <= geod_tolerance:
+            flag_iteration = False
+
+    alt = r / np.cos(lat) - radius_earth * c * 1000  # *metros
+    if lat > np.pi / 2:
+        lat -= twopi
+    return lat, long, alt, current_sideral
 
 
 def calc_quaternion(q0, omega, dt):

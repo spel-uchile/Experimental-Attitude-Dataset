@@ -4,6 +4,9 @@ Date: 04-09-2023
 email: els.obrq@gmail.com
 """
 import numpy as np
+import datetime
+twopi = 2.0 * np.pi
+deg2rad = np.pi / 180.0
 
 
 def runge_kutta_4(function, x, dt, *args):
@@ -26,6 +29,75 @@ def jday(year, mon, day, hr, minute, sec):
     jd0 = 367.0 * year - 7.0 * (year + ((mon + 9.0) // 12.0)) * 0.25 // 1.0 + 275.0 * mon // 9.0 + day + 1721013.5
     utc = ((sec / 60.0 + minute) / 60.0 + hr)  # utc in hours#
     return jd0 + utc / 24.
+
+
+def gstime(jdut1):
+    tut1 = (jdut1 - 2451545.0) / 36525.0
+    temp = -6.2e-6 * tut1 * tut1 * tut1 + 0.093104 * tut1 * tut1 + \
+           (876600.0 * 3600 + 8640184.812866) * tut1 + 67310.54841  # sec
+    temp = (temp * deg2rad / 240.0) % twopi  # 360/86400 = 1/240, to deg, to rad
+
+    #  ------------------------ check quadrants ---------------------
+    if temp < 0.0:
+        temp += twopi
+
+    return temp
+
+
+def fmod2(x):
+    if x > np.pi:
+        x -= twopi
+    elif x < -np.pi:
+        x += twopi
+    else:
+        x = x
+    return x
+
+
+def julian_to_datetime(julian_date):
+    base_date = datetime.datetime(2000, 1, 1)  # Julian date 2451545 corresponds to this datetime
+    days_elapsed = julian_date - 2451545
+    delta = datetime.timedelta(days=days_elapsed)
+    converted_datetime = base_date + delta
+    return converted_datetime
+
+
+def jd_to_decyear(jd):
+    # --------------- find year and days of the year ---------------
+    temp = jd - 2415019.5
+    tu = temp / 365.25
+    year = 1900 + np.floor(tu)
+    leapyrs = np.floor((year - 1901) * 0.25)
+
+    # optional nudge by 8.64x10-7 sec to get even outputs
+    days = temp - ((year - 1900) * 365.0 + leapyrs) + 0.00000000001
+
+    # ------------ check for case of beginning of a year -----------
+    if days < 1.0:
+        year = year - 1
+        leapyrs = np.floor((year - 1901) * 0.25)
+        days = temp - ((year - 1900) * 365.0 + leapyrs)
+
+    decyear = year + days / 365.25
+    return decyear
+
+
+def timestamp_to_julian(timestamp):
+    unix_epoch = datetime.datetime(1970, 1, 1)
+    input_datetime = unix_epoch + datetime.timedelta(seconds=timestamp)
+    julian_date = 2440587.5 + (input_datetime - unix_epoch).total_seconds() / 86400
+    return julian_date
+
+
+def tle_epoch_to_julian(tle_epoch):
+    # Extrae el año y el día del año del valor de época
+    year = int(tle_epoch[:2])
+    day_of_year = int(tle_epoch[2:5])
+    fraction_of_day = float("0" + tle_epoch[5:])
+    # Calcula la fecha juliana
+    base_date = jday(2000 + year, 1, 0,  0, 0, 0)
+    julian_date = base_date + day_of_year + fraction_of_day
+    return julian_date
 
 
 def skewsymmetricmatrix(x_omega_b):
@@ -93,7 +165,6 @@ def dcm_from_mrp(sigma):
     c *= temp
     c += np.eye(3)
     return c
-
 
 
 # MRP
