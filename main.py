@@ -80,7 +80,8 @@ if __name__ == '__main__':
                 'q_i2b': [q_i2b],
                 'omega_b': [omega_b],
                 'mag_i': [mag_i],
-                'sun_i': [sun_pos]}
+                'sun_i': [sun_pos],
+                'sideral': [sideral]}
 
     k = 0
     while current_time < tend * 0.1:
@@ -110,14 +111,16 @@ if __name__ == '__main__':
         channels['omega_b'].append(omega_b)
         channels['mag_i'].append(mag_i)
         channels['sun_i'].append(sun_pos)
+        channels['sideral'].append(sideral)
 
         print(current_time, tend, k)
 
     monitor = Monitor(channels)
     monitor.set_position('sat_pos_i')
     monitor.set_quaternion('q_i2b')
+    monitor.set_sideral('sideral')
     monitor.add_vector('sun_i', color='yellow')
-    monitor.add_vector('mag_i', color='white')
+    monitor.add_vector('mag_i', color='red')
 
     monitor.plot(x_dataset='time', y_dataset='mag_i')
     monitor.plot(x_dataset='time', y_dataset='lonlat')

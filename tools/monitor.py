@@ -18,6 +18,7 @@ class Monitor:
         self.fft_dataset = {}
         self.position = None
         self.q_i2b = None
+        self.sideral = None
         self.vectors = {}
 
     def add_data(self, new_data: dict):
@@ -28,6 +29,9 @@ class Monitor:
 
     def set_quaternion(self, name):
         self.q_i2b = self.dataset[name]
+
+    def set_sideral(self, name):
+        self.sideral = self.dataset['sideral']
 
     def add_vector(self, name, color='white'):
         self.vectors[name] = {'data': self.dataset[name],
@@ -82,7 +86,9 @@ class Monitor:
             self.fft_dataset[elem + '_freq'] = f_plot
 
     def plot3d(self):
-        monitor_3d = Monitor3d(self.position, self.q_i2b)
+        monitor_3d = Monitor3d(self.position, self.q_i2b, self.sideral)
+        monitor_3d.add_vectors(self.vectors)
+        monitor_3d.plotter3d.show()
 
     @staticmethod
     def show_monitor():
@@ -94,12 +100,14 @@ class Monitor3d:
                   pv.Arrow(np.zeros(3), direction=np.array([0, 1, 0]), scale=1),
                   pv.Arrow(np.zeros(3), direction=np.array([0, 0, 1]), scale=1)]
     plotter3d = pv.Plotter()
+    vectors = {}
 
-    def __init__(self, position, q_i2b):
-        self.index_ = 0
+    def __init__(self, position, q_i2b, sideral):
+        self.last_index_ = 0
         self.last_pos = np.zeros(3)
         self.last_q_i2b = pyquat(np.array([1, 0, 0, 0]))
-
+        self.last_sideral = 0
+        self.earth_sideral = np.asarray(sideral)
         self.sat_pos = np.asarray(position)
         new_q = np.asarray(q_i2b)
         self.sat_q_i2b = np.concatenate([new_q[:, 3].reshape(-1, 1), new_q[:, :3]], axis=1)
@@ -120,8 +128,22 @@ class Monitor3d:
 
         self.update(0)
 
-        self.plotter3d.add_slider_widget(self.update, [0, len(self.sat_pos) - 1], value=0,  title='Step')
-        self.plotter3d.show()
+        self.plotter3d.add_slider_widget(self.update, [0, len(self.sat_pos) - 1], value=0, title='Step')
+
+    def add_vectors(self, vectors_list):
+        for key, item in vectors_list.items():
+            data, color = item['data'], item['color']
+            if 'mag' in key:
+                relative_to_sc = data[0]
+            else:
+                relative_to_sc = data[0] - self.sat_pos[0]
+
+            relative_to_sc /= np.linalg.norm(relative_to_sc)
+            self.vectors[key] = {}
+            self.vectors[key]['data'] = data
+            self.vectors[key]['model'] = pv.Arrow(self.sat_pos[0], direction=relative_to_sc,
+                                                  scale=200)
+            self.plotter3d.add_mesh(self.vectors[key]['model'], color=color, reset_camera=False)
 
     def update(self, index_):
         index_ = int(index_)
@@ -129,16 +151,37 @@ class Monitor3d:
         sc_pos_i = self.sat_pos[index_]
         relative_pos = sc_pos_i - self.last_pos
         self.sat_model.translate(relative_pos, inplace=True)
-
+        # orientation
         quaternion_tn = pyquat(self.sat_q_i2b[index_]).unit
         inv_quaternion = self.last_q_i2b.inverse
         d_quaternion = quaternion_tn * inv_quaternion
         self.sat_model.rotate_vector(vector=tuple(d_quaternion.vector),
                                      angle=d_quaternion.angle * np.rad2deg(1),
                                      point=sc_pos_i, inplace=True)
+        # earth
+        sideral = self.earth_sideral[index_]
+        self.earth3d.rotate_z((sideral - self.last_sideral) * np.rad2deg(1), inplace=True)
+        # vectors
+        for key, arrow in self.vectors.items():
+            if 'mag' in key:
+                vect_pos = arrow['data'][index_]
+                last_vect_pos = arrow['data'][self.last_index_]
+            else:
+                vect_pos = arrow['data'][index_] - sc_pos_i
+                last_vect_pos = arrow['data'][self.last_index_] - self.last_pos
 
+            en = np.linalg.norm(vect_pos)
+            ln = np.linalg.norm(last_vect_pos)
+            rot_vec = np.cross(last_vect_pos, vect_pos) / (en * ln)
+            rot_vec /= np.linalg.norm(rot_vec)
+            ang_rot = np.arccos(np.dot(last_vect_pos, vect_pos) / (en * ln))
+            arrow['model'].translate(relative_pos, inplace=True)
+            arrow['model'].rotate_vector(vector=rot_vec, angle=np.rad2deg(ang_rot), point=sc_pos_i, inplace=True)
+
+        self.last_sideral = sideral
         self.last_pos = sc_pos_i
         self.last_q_i2b = quaternion_tn
+        self.last_index_ = index_
 
     def add_eci_frame(self):
         scale = 1e-3
