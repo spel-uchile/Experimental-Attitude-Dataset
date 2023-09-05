@@ -36,7 +36,8 @@ class Quaternions(object):
             q_[0:3] = u * np.sin(0.5*rot)
             q_[3] = np.cos(0.5*rot)
         else:
-            raise Exception('[Quaternion] Bad initialization, arguments must be a vector of length 4, 2 (rot, unit_dir) or one (dir)')
+            raise Exception('[Quaternion] Bad initialization, arguments must be a vector of length 4, 2 (rot, '
+                            'unit_dir) or one (dir)')
         self.q = q_
 
     def __call__(self, *args, **kwargs):
@@ -192,8 +193,8 @@ if __name__ == '__main__':
 
     q_b2lvlh = Quaternions(q_lvlh2b.conjugate())
     vlvlh_ = q_b2lvlh.frame_conv(vb)
-    q1 = Quaternions([np.array([0, 1, 0]), np.deg2rad(45)])
-    q2 = Quaternions([np.array([1, 0, 0]), np.deg2rad(90)])
-    q3 = Quaternions([np.array([0, 0, 1]), np.deg2rad(90)])
-    q4 = q3 * q1 * q2
-    print(q4())
+    q1_ = Quaternions([np.array([0, 1, 0]), np.deg2rad(45)])
+    q2_ = Quaternions([np.array([1, 0, 0]), np.deg2rad(90)])
+    q3_ = Quaternions([np.array([0, 0, 1]), np.deg2rad(90)])
+    q4_ = q3_ * q1_ * q2_
+    print(q4_())
