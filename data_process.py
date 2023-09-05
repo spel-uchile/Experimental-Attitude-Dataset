@@ -23,6 +23,7 @@ class RealData:
         self.data.sort_values(by=['timestamp'], inplace=True)
         self.data.dropna(inplace=True)
         self.data['jd'] = [timestamp_to_julian(ts) for ts in self.data['timestamp'].values]
+        self.data[['acc_x', 'acc_y', 'acc_z']] *= np.deg2rad(1)
 
     def create_datetime_from_timestamp(self, time_format):
         self.data['DateTime'] = [datetime.datetime.fromtimestamp(ts).strftime(time_format)

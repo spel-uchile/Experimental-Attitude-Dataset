@@ -68,13 +68,13 @@ if __name__ == '__main__':
     lat, lon, alt, sideral = calc_geod_lat_lon_alt(sat_pos, c_jd)
     mag_i = mag_model.calc_mag(c_jd, sideral, lat, lon, alt)
     omega_b = sensors.data[['acc_x', 'acc_y', 'acc_z']].values[0]
-    q_i2b = Quaternions.get_from_two_v(mag_i, sensors.data[['mag_x', 'mag_y', 'mag_z']].values[0])
+    q_i2b = Quaternions.get_from_two_v(mag_i, sensors.data[['mag_x', 'mag_y', 'mag_z']].values[0])()
 
     channels = {'time': [current_time],
                 'sat_pos_i': [sat_pos],
                 'lonlat': [np.array([lon, lat])],
                 'sat_vel_i': [sat_vel],
-                'q_i2b': [q_i2b()],
+                'q_i2b': [q_i2b],
                 'omega_b': [omega_b],
                 'mag_i': [mag_i],
                 'sun_i': [sun_pos]}
@@ -84,7 +84,9 @@ if __name__ == '__main__':
         # # integration
         if k < len(sensors.data):
             omega_b = sensors.data[['acc_x', 'acc_y', 'acc_z']].values[k]
-            q_i2b = Quaternions.get_from_two_v(mag_i, sensors.data[['mag_x', 'mag_y', 'mag_z']].values[k])
+
+        q_i2b = calc_quaternion(q_i2b, omega_b, dt)
+        omega_b = calc_omega_b(omega_b, dt)
 
         # update time
         current_time = np.round(current_time + dt, 5)
@@ -113,6 +115,15 @@ if __name__ == '__main__':
 
     plt.figure()
     plt.plot(channels['lonlat'])
+
+    plt.figure()
+    plt.plot(channels['sun_i'])
+
+    plt.figure()
+    plt.plot(channels['q_i2b'])
+
+    plt.figure()
+    plt.plot(channels['omega_b'])
     plt.show()
 
 

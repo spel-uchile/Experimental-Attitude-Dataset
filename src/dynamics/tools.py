@@ -10,16 +10,16 @@ deg2rad = np.pi / 180.0
 
 
 def runge_kutta_4(function, x, dt, *args):
-    k1 = function(x, args)
+    k1 = function(x, *args)
     xk2 = x + (dt / 2.0) * k1
 
-    k2 = function(xk2, args)
+    k2 = function(xk2, *args)
     xk3 = x + (dt / 2.0) * k2
 
-    k3 = function(xk3, args)
+    k3 = function(xk3, *args)
     xk4 = x + dt * k3
 
-    k4 = function(xk4, args)
+    k4 = function(xk4, *args)
 
     next_x = (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
     return next_x

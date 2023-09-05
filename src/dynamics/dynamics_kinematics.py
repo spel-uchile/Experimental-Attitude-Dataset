@@ -18,7 +18,7 @@ radius_earth = 6378.137  # km
 earth_flat = 1.0 / 298.257223563
 earth_e2 = earth_flat * (2 - earth_flat)
 geod_tolerance = 1e-10  # rad
-mu = 3.986005e14  # in m3 / s2
+
 inertia = np.array([[38478.678, 0, 0], [0, 38528.678, 0], [0, 0, 6873.717]]) * 1e-6
 inv_inertia = np.linalg.inv(inertia)
 
@@ -58,11 +58,11 @@ def calc_geod_lat_lon_alt(pos, c_jd):
         phi = lat
         c = 1 / np.sqrt(1 - earth_e2 * np.sin(phi) * np.sin(phi))
         lat = np.arctan2(pos[2] + radius_earth * c
-                         * earth_e2 * np.sin(phi) * 1000, r)
+                         * earth_e2 * np.sin(phi), r)
         if (np.abs(lat - phi)) <= geod_tolerance:
             flag_iteration = False
 
-    alt = r / np.cos(lat) - radius_earth * c * 1000  # *metros
+    alt = r / np.cos(lat) - radius_earth * c  # *metros
     if lat > np.pi / 2:
         lat -= twopi
     return lat, long, alt, current_sideral
@@ -74,7 +74,7 @@ def calc_quaternion(q0, omega, dt):
 
 
 def calc_omega_b(omega0, dt):
-    new_omega = omega0 +  runge_kutta_4(domega, omega0, dt)
+    new_omega = omega0 + runge_kutta_4(domega, omega0, dt)
     return new_omega
 
 
