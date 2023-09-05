@@ -4,15 +4,18 @@ Date: 04-09-2023
 email: els.obrq@gmail.com
 """
 import matplotlib.pyplot as plt
+import numpy as np
+import datetime
 
-from data_process import RealData
 from data.value_mag_calibration import get_s3_mag_cal
-from tools.get_video_frame import save_frame
+
+from src.data_process import RealData
 from src.dynamics.dynamics_kinematics import *
 from src.dynamics.Quaternion import Quaternions
 from src.dynamics.MagEnv import MagEnv
-import numpy as np
-import datetime
+
+from tools.get_video_frame import save_frame
+from tools.monitor import Monitor, Monitor3d
 
 # CONFIG
 PROJECT_FOLDER = "data/M-20230824/"
@@ -111,20 +114,14 @@ if __name__ == '__main__':
 
         print(current_time, tend, k)
 
-    plt.figure()
-    plt.plot(channels['mag_i'])
+    monitor = Monitor(channels)
 
-    plt.figure()
-    plt.plot(channels['lonlat'])
+    monitor.plot(x_dataset='time', y_dataset='mag_i')
+    monitor.plot(x_dataset='time', y_dataset='lonlat')
+    monitor.plot(x_dataset='time', y_dataset='sun_i')
+    monitor.plot(x_dataset='time', y_dataset='q_i2b')
+    monitor.plot(x_dataset='time', y_dataset='omega_b')
 
-    plt.figure()
-    plt.plot(channels['sun_i'])
-
-    plt.figure()
-    plt.plot(channels['q_i2b'])
-
-    plt.figure()
-    plt.plot(channels['omega_b'])
     plt.show()
 
 
