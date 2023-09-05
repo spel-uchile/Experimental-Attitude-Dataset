@@ -7,8 +7,9 @@ import matplotlib.pyplot as plt
 
 from data_process import RealData
 from data.value_mag_calibration import get_s3_mag_cal
-from get_video_frame import save_frame
+from tools.get_video_frame import save_frame
 from src.dynamics.dynamics_kinematics import *
+from src.dynamics.Quaternion import Quaternions
 from src.dynamics.MagEnv import MagEnv
 import numpy as np
 import datetime

@@ -1,7 +1,7 @@
 
 import numpy as np
 from .igrf.IGRF import calculate_igrf
-from .tools import jd_to_decyear
+from tools.tools import jd_to_decyear
 
 
 RAD2DEG = 180/np.pi

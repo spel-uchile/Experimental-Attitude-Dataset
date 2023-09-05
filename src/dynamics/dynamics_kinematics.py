@@ -3,11 +3,9 @@ Created by Elias Obreque
 Date: 04-09-2023
 email: els.obrq@gmail.com
 """
-import pandas as pd
 from sgp4.api import Satrec
 from sgp4.api import WGS84
-from .Quaternion import Quaternions
-from .tools import *
+from tools.tools import *
 import numpy as np
 
 RAD2DEG = 180 / np.pi

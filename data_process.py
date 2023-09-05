@@ -6,7 +6,7 @@ email: els.obrq@gmail.com
 import matplotlib.pyplot as plt
 from scipy.cluster.hierarchy import dendrogram
 from sklearn.cluster import AgglomerativeClustering
-from src.dynamics.tools import *
+from tools.tools import *
 import pandas as pd
 import numpy as np
 import datetime
