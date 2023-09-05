@@ -7,16 +7,31 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pyvista as pv
+from pyquaternion import Quaternion as pyquat
 from pyvista import examples
+import pyvista
 
 
 class Monitor:
     def __init__(self, dataset):
         self.dataset = dataset
         self.fft_dataset = {}
+        self.position = None
+        self.q_i2b = None
+        self.vectors = {}
 
     def add_data(self, new_data: dict):
         self.dataset = {**self.dataset, **new_data}
+
+    def set_position(self, name):
+        self.position = self.dataset[name]
+
+    def set_quaternion(self, name):
+        self.q_i2b = self.dataset[name]
+
+    def add_vector(self, name, color='white'):
+        self.vectors[name] = {'data': self.dataset[name],
+                              'color': color}
 
     def plot(self, x_dataset, y_dataset, xname=None, yname=None, title=None, step=True, scale=1, fft=False):
         if fft:
@@ -49,7 +64,7 @@ class Monitor:
                 elif fft:
                     plt.stem(x, y * scale, color[i], label=yset)
                 else:
-                    plt.plot(x, y * scale,  'o-', label=yset)
+                    plt.plot(x, y * scale, 'o-', label=yset)
                 i += 1
         plt.legend()
         plt.draw()
@@ -66,42 +81,134 @@ class Monitor:
             self.fft_dataset[elem + '_amp'] = np.abs(w_plot)
             self.fft_dataset[elem + '_freq'] = f_plot
 
+    def plot3d(self):
+        monitor_3d = Monitor3d(self.position, self.q_i2b)
+
     @staticmethod
     def show_monitor():
         plt.show()
 
 
 class Monitor3d:
-    LVLH_VECTOR = [pv.Arrow(np.zeros(3), direction=np.array([1, 0, 0]), scale=1),
-                   pv.Arrow(np.zeros(3), direction=np.array([0, 1, 0]), scale=1),
-                   pv.Arrow(np.zeros(3), direction=np.array([0, 0, 1]), scale=1)]
+    AUX_VECTOR = [pv.Arrow(np.zeros(3), direction=np.array([1, 0, 0]), scale=1),
+                  pv.Arrow(np.zeros(3), direction=np.array([0, 1, 0]), scale=1),
+                  pv.Arrow(np.zeros(3), direction=np.array([0, 0, 1]), scale=1)]
     plotter3d = pv.Plotter()
-    earth3d = examples.load_globe()
-    earth3d.points /= 1000000
 
-    def __init__(self, dataset_info):
-        self.dataset_info = dataset_info
+    def __init__(self, position, q_i2b):
+        self.index_ = 0
+        self.last_pos = np.zeros(3)
+        self.last_q_i2b = pyquat(np.array([1, 0, 0, 0]))
+
+        self.sat_pos = np.asarray(position)
+        new_q = np.asarray(q_i2b)
+        self.sat_q_i2b = np.concatenate([new_q[:, 3].reshape(-1, 1), new_q[:, :3]], axis=1)
 
         # earth3d = pv.Sphere(radius=re, phi_resolution=180, theta_resolution=360)
+        self.earth3d, texture = load_earth(radius=6378.137)
+
+        self.sat_model = pv.PolyData("tools/cad/basic3U.stl")
+        self.plotter3d.add_mesh(self.earth3d, texture=texture)  # , color='#0C007C')
+        self.plotter3d.add_mesh(self.sat_model, color='white')
+        self.plotter3d.add_points(np.array([elem for elem in self.sat_pos]), render_points_as_spheres=True,
+                                  point_size=3, color='black')
+        self.plotter3d.add_axes()
+        self.add_eci_frame()
+
+        # reset earth
+        self.earth3d.rotate_z(180, inplace=True)
+
+        self.update(0)
+
+        self.plotter3d.add_slider_widget(self.update, [0, len(self.sat_pos) - 1], value=0,  title='Step')
+        self.plotter3d.show()
+
+    def update(self, index_):
+        index_ = int(index_)
+        # position
+        sc_pos_i = self.sat_pos[index_]
+        relative_pos = sc_pos_i - self.last_pos
+        self.sat_model.translate(relative_pos, inplace=True)
+
+        quaternion_tn = pyquat(self.sat_q_i2b[index_]).unit
+        inv_quaternion = self.last_q_i2b.inverse
+        d_quaternion = quaternion_tn * inv_quaternion
+        self.sat_model.rotate_vector(vector=tuple(d_quaternion.vector),
+                                     angle=d_quaternion.angle * np.rad2deg(1),
+                                     point=sc_pos_i, inplace=True)
+
+        self.last_pos = sc_pos_i
+        self.last_q_i2b = quaternion_tn
+
+    def add_eci_frame(self):
+        scale = 1e-3
+        self.plotter3d.add_lines(np.array([[0, 0, 0], [1e7 * scale, 0, 0]]), color=[255, 0, 0], width=2,
+                                 label='X-axis')
+        self.plotter3d.add_lines(np.array([[0, 0, 0], [0, 1e7 * scale, 0]]), color=[0, 255, 0], width=2,
+                                 label='Y-axis')
+        self.plotter3d.add_lines(np.array([[0, 0, 0], [0, 0, 1e7 * scale]]), color=[0, 0, 255], width=2,
+                                 label='Z-axis')
 
 
+def load_earth(radius=1.0, lat_resolution=100, lon_resolution=200):
+    """Load the planet Earth as a textured sphere.
 
-        plotter3d.add_mesh(earth3d)  # , color='#0C007C')
-        plotter3d.add_axes()
-        quaternion_t0 = pyquat([1, 0, 0, 0])
-        k_matrix = quaternion_t0.transformation_matrix
-        plotter3d.add_points(np.array([elem for elem in dataset_info['sc_pos'].values]), render_points_as_spheres=True,
-                             point_size=10)
-        for i in range(len(dataset_info['earth_pos_lvlh'])):
-            pos_i = np.zeros(3)
+    Parameters
+    ----------
+    radius : float, default: 1.0
+        Sphere radius.
 
-            LVLH_VECTOR[0] = pv.Arrow(pos_i, direction=dataset_info['earth_pos_b'][i], scale=1)
-            earth_b_arrows[-1].transform(k_matrix.dot(10 * np.identity(4) * np.array([10, 10, 10, 10])), inplace=True)
-            pos_i = dataset_info['sc_pos'][i]
+    lat_resolution : int, default: 50
+        Set the number of points in the latitude direction.
 
-            earth_b_arrows[-1].translate(pos_i, inplace=True)
+    lon_resolution : int, default: 100
+        Set the number of points in the longitude direction.
 
-            plotter3d.add_mesh(earth_b_arrows[-1], color='yellow')
+    Returns
+    -------
+    pyvista.PolyData
+        Earth dataset with texture.
 
-        plotter3d.show()
+    Examples
+    --------
+    """
+    sphere = _sphere_with_texture_map(
+        radius=radius, lat_resolution=lat_resolution, lon_resolution=lon_resolution
+    )
+    sphere.translate(-np.array(sphere.center), inplace=True)
 
+    f = pyvista.read_texture("tools/img/2k_earth_daymap.jpg")
+    return sphere, f
+
+
+def _sphere_with_texture_map(radius=1.0, lat_resolution=50, lon_resolution=100):
+    """Sphere with texture coordinates.
+
+    Parameters
+    ----------
+    radius : float, default: 1.0
+        Sphere radius.
+
+    lat_resolution : int, default: 100
+        Set the number of points in the latitude direction.
+
+    lon_resolution : int, default: 100
+        Set the number of points in the longitude direction.
+
+    Returns
+    -------
+    pyvista.PolyData
+        Sphere mesh with texture coordinates.
+
+    """
+    # https://github.com/pyvista/pyvista/pull/2994#issuecomment-1200520035
+    theta, phi = np.mgrid[0: np.pi: lat_resolution * 1j, 0: 2 * np.pi: lon_resolution * 1j]
+    x = radius * np.sin(theta) * np.cos(phi)
+    y = radius * np.sin(theta) * np.sin(phi)
+    z = radius * np.cos(theta)
+    sphere = pyvista.StructuredGrid(x, y, z)
+    texture_coords = np.empty((sphere.n_points, 2))
+    texture_coords[:, 0] = phi.ravel('F') / phi.max()
+    texture_coords[:, 1] = theta[::-1, :].ravel('F') / theta.max()
+    sphere.active_t_coords = texture_coords
+    return sphere.extract_surface(pass_pointid=False, pass_cellid=False)

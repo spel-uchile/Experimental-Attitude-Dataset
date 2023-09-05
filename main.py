@@ -3,7 +3,6 @@ Created by Elias Obreque
 Date: 04-09-2023
 email: els.obrq@gmail.com
 """
-import matplotlib.pyplot as plt
 import numpy as np
 import datetime
 
@@ -15,7 +14,7 @@ from src.dynamics.Quaternion import Quaternions
 from src.dynamics.MagEnv import MagEnv
 
 from tools.get_video_frame import save_frame
-from tools.monitor import Monitor, Monitor3d
+from tools.monitor import Monitor
 
 # CONFIG
 PROJECT_FOLDER = "data/M-20230824/"
@@ -51,9 +50,9 @@ if __name__ == '__main__':
     line1, line2 = sensors.search_nearly_tle()
 
     # plot
-    sensors.plot_key(['mag_x', 'mag_y', 'mag_z'])
-    sensors.plot_key(['acc_x', 'acc_y', 'acc_z'])
-    sensors.plot_key(['sun3', 'sun2', 'sun4'], show=True)
+    # sensors.plot_key(['mag_x', 'mag_y', 'mag_z'])
+    # sensors.plot_key(['acc_x', 'acc_y', 'acc_z'])
+    # sensors.plot_key(['sun3', 'sun2', 'sun4'], show=True)
 
     # TIME
     dt = WINDOW_TIME['STEP']
@@ -84,7 +83,7 @@ if __name__ == '__main__':
                 'sun_i': [sun_pos]}
 
     k = 0
-    while current_time < tend:
+    while current_time < tend * 0.1:
         # # integration
         if k < len(sensors.data):
             omega_b = sensors.data[['acc_x', 'acc_y', 'acc_z']].values[k]
@@ -115,6 +114,10 @@ if __name__ == '__main__':
         print(current_time, tend, k)
 
     monitor = Monitor(channels)
+    monitor.set_position('sat_pos_i')
+    monitor.set_quaternion('q_i2b')
+    monitor.add_vector('sun_i', color='yellow')
+    monitor.add_vector('mag_i', color='white')
 
     monitor.plot(x_dataset='time', y_dataset='mag_i')
     monitor.plot(x_dataset='time', y_dataset='lonlat')
@@ -122,7 +125,9 @@ if __name__ == '__main__':
     monitor.plot(x_dataset='time', y_dataset='q_i2b')
     monitor.plot(x_dataset='time', y_dataset='omega_b')
 
-    plt.show()
+    monitor.plot3d()
+
+    monitor.show_monitor()
 
 
 
