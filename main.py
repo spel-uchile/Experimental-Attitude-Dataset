@@ -6,7 +6,9 @@ email: els.obrq@gmail.com
 import numpy as np
 import datetime
 
-from data.value_mag_calibration import get_s3_mag_cal
+from data.value_mag_calibration import get_s3_mag_cal, get_s3_mag_cal_past
+
+from src.kalman_filter.ekf import MEKF
 
 from src.data_process import RealData
 from src.dynamics.dynamics_kinematics import *
@@ -35,13 +37,10 @@ CREATE_FRAME = False
 if __name__ == '__main__':
     if CREATE_FRAME:
         save_frame(PROJECT_FOLDER, VIDEO_DATA)
-    D, bias = get_s3_mag_cal()
-
     # create data with datetime, and near tle
-    sensors = RealData(PROJECT_FOLDER + OBC_DATA)
+    sensors = RealData(PROJECT_FOLDER, OBC_DATA)
     sensors.create_datetime_from_timestamp(TIME_FORMAT)
-    # mag calibration
-    sensors.calibrate_mag(scale=D, bias=bias)
+
     # show window time
     if WINDOW_TIME['FLAG']:
         sensors.set_window_time(WINDOW_TIME['Start'], WINDOW_TIME['Stop'], TIME_FORMAT)
@@ -49,88 +48,110 @@ if __name__ == '__main__':
         sensors.set_window_time()
     line1, line2 = sensors.search_nearly_tle()
 
-    # plot
-    # sensors.plot_key(['mag_x', 'mag_y', 'mag_z'])
-    # sensors.plot_key(['acc_x', 'acc_y', 'acc_z'])
-    # sensors.plot_key(['sun3', 'sun2', 'sun4'], show=True)
-
     # TIME
     dt = WINDOW_TIME['STEP']
     start_datetime = datetime.datetime.strptime(WINDOW_TIME['Start'], TIME_FORMAT)
     stop_datetime = datetime.datetime.strptime(WINDOW_TIME['Stop'], TIME_FORMAT)
     print(start_datetime.timestamp(), stop_datetime.timestamp())
 
+    # Calibration
+    mag_model = MagEnv()
+    time_vector = sensors.data['jd'].values
+    sat_state = np.asarray([calc_sat_pos_i(line1, line2, cj) for cj in time_vector])
+    sat_pos = sat_state[:, 0, :]
+    sat_vel = sat_state[:, 1, :]
+    sun_pos = np.asarray([calc_sun_pos_i(c_j) for c_j in time_vector])
+    sat_lla = np.asarray([calc_geod_lat_lon_alt(sat_pos_, cj) for sat_pos_, cj in zip(sat_pos, time_vector)])
+    lat, lon, alt, sideral = sat_lla[:, 0], sat_lla[:, 1], sat_lla[:, 2], sat_lla[:, 3]
+    mag_i = np.asarray([mag_model.calc_mag(c_j, s_, lat_, lon_, alt_)
+                        for c_j, s_, lat_, lon_, alt_ in zip(time_vector, sideral, lat, lon, alt)])
+
+    # sensors.calibrate_mag(mag_i=mag_i)
+    sensors.calibrate_mag(by_file=True)
+    # plot
+    sensors.plot_key(['mag_x', 'mag_y', 'mag_z'])
+    # sensors.plot_key(['acc_x', 'acc_y', 'acc_z'])
+    # sensors.plot_key(['sun3', 'sun2', 'sun4'])
+
     # SIMULATION
     current_time = 0
     c_jd = sensors.data['jd'].values[0]
     tend = stop_datetime.timestamp() - start_datetime.timestamp()
-    mag_model = MagEnv()
 
-    sat_pos, sat_vel = calc_sat_pos_i(line1, line2, c_jd)
-    sun_pos = calc_sun_pos_i(c_jd)
-    lat, lon, alt, sideral = calc_geod_lat_lon_alt(sat_pos, c_jd)
-    mag_i = mag_model.calc_mag(c_jd, sideral, lat, lon, alt)
     omega_b = sensors.data[['acc_x', 'acc_y', 'acc_z']].values[0]
-    q_i2b = Quaternions.get_from_two_v(mag_i, sensors.data[['mag_x', 'mag_y', 'mag_z']].values[0])()
+    q_i2b = Quaternions.get_from_two_v(mag_i[0], sensors.data[['mag_x', 'mag_y', 'mag_z']].values[0])()
+    mag_b = Quaternions(q_i2b).frame_conv(mag_i[0])
 
-    channels = {'time': [current_time],
-                'sat_pos_i': [sat_pos],
-                'lonlat': [np.array([lon, lat])],
-                'sat_vel_i': [sat_vel],
+    channels = {'full_time': time_vector,
+                'sim_time': [current_time],
+                'sat_pos_i': sat_pos,
+                'lonlat': np.array([lon, lat]),
+                'sat_vel_i': sat_vel,
                 'q_i2b': [q_i2b],
                 'omega_b': [omega_b],
-                'mag_i': [mag_i],
-                'sun_i': [sun_pos],
-                'sideral': [sideral]}
+                'mag_i': mag_i,
+                'mag_b': [mag_b],
+                'sun_i': sun_pos,
+                'sideral': sideral}
 
-    k = 0
-    while current_time < tend * 0.1:
+    # MEKF
+    P = np.diag([0.5, 0.5, 0.5, 0.1, 0.1, 0.1])
+    ekf_model = MEKF(inertia, P=P, Q=np.zeros((6, 6)), R=np.zeros((3, 3)))
+    ekf_model.sigma_u = 0.005
+    ekf_model.sigma_v = 0.001
+    ekf_model.set_quat(q_i2b, save=True)
+    ekf_model.get_observer_prediction(None, mag_i[0]/np.linalg.norm(mag_i[0]))
+    k = 1
+    while current_time < tend * 0.7:
+        ekf_model.set_gyro_measure(omega_b)
+
         # # integration
-        if k < len(sensors.data):
-            omega_b = sensors.data[['acc_x', 'acc_y', 'acc_z']].values[k]
+        ekf_model.propagate(dt)
 
         q_i2b = calc_quaternion(q_i2b, omega_b, dt)
-        omega_b = calc_omega_b(omega_b, dt)
+        # omega_b = calc_omega_b(omega_b, dt)
 
         # update time
         current_time = np.round(current_time + dt, 5)
         c_jd += dt/86400
-        k += 1
-        # update position without integration
-        sat_pos, sat_vel = calc_sat_pos_i(line1, line2, c_jd)
-        sun_pos = calc_sun_pos_i(c_jd)
-        lat, lon, alt, sideral = calc_geod_lat_lon_alt(sat_pos, c_jd)
-        mag_i = mag_model.calc_mag(c_jd, sideral, lat, lon, alt)
+
+        mag_b = Quaternions(q_i2b).frame_conv(mag_i[k])
+
+        if k < len(sensors.data):
+            omega_b = sensors.data[['acc_x', 'acc_y', 'acc_z']].values[k]
+            ekf_model.inject_vector(sensors.data[['mag_x', 'mag_y', 'mag_z']].values[k], mag_i[k], sigma2=0.1)
+            ekf_model.reset_state()
+            k += 1
 
         # save data
-        channels['time'].append(current_time)
-        channels['sat_pos_i'].append(sat_pos)
-        channels['sat_vel_i'].append(sat_vel)
-        channels['lonlat'].append(np.array([lon, lat]))
+        channels['sim_time'].append(current_time)
         channels['q_i2b'].append(q_i2b)
         channels['omega_b'].append(omega_b)
-        channels['mag_i'].append(mag_i)
-        channels['sun_i'].append(sun_pos)
-        channels['sideral'].append(sideral)
+        channels['mag_b'].append(mag_b)
 
         print(current_time, tend, k)
 
+    channels = {**channels, **ekf_model.historical}
     monitor = Monitor(channels)
     monitor.set_position('sat_pos_i')
-    monitor.set_quaternion('q_i2b')
+    monitor.set_quaternion('q_est')
     monitor.set_sideral('sideral')
     monitor.add_vector('sun_i', color='yellow')
     monitor.add_vector('mag_i', color='red')
 
-    monitor.plot(x_dataset='time', y_dataset='mag_i')
-    monitor.plot(x_dataset='time', y_dataset='lonlat')
-    monitor.plot(x_dataset='time', y_dataset='sun_i')
-    monitor.plot(x_dataset='time', y_dataset='q_i2b')
-    monitor.plot(x_dataset='time', y_dataset='omega_b')
-
+    monitor.plot(x_dataset='full_time', y_dataset='mag_i')
+    monitor.plot(x_dataset='sim_time', y_dataset='mag_b')
+    # monitor.plot(x_dataset='time', y_dataset='lonlat')
+    # monitor.plot(x_dataset='time', y_dataset='sun_i')
+    monitor.plot(x_dataset='sim_time', y_dataset='q_i2b')
+    monitor.plot(x_dataset='sim_time', y_dataset='omega_b')
+    # ekf
+    monitor.plot(x_dataset='sim_time', y_dataset='b')
+    monitor.plot(x_dataset='sim_time', y_dataset='q_est')
+    monitor.plot(x_dataset='sim_time', y_dataset='mag_est')
+    monitor.show_monitor()
     monitor.plot3d()
 
-    monitor.show_monitor()
 
 
 

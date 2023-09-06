@@ -68,6 +68,7 @@ def calc_geod_lat_lon_alt(pos, c_jd):
 
 def calc_quaternion(q0, omega, dt):
     new_q = q0 + runge_kutta_4(dquaternion, q0, dt, omega)
+    new_q /= np.linalg.norm(new_q)
     return new_q
 
 

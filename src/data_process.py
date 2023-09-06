@@ -7,9 +7,11 @@ import matplotlib.pyplot as plt
 from scipy.cluster.hierarchy import dendrogram
 from sklearn.cluster import AgglomerativeClustering
 from tools.tools import *
+from tools.two_step_mag_calibration import two_step
 import pandas as pd
 import numpy as np
 import datetime
+import json
 from sklearn.cluster import KMeans
 
 ts2022 = 1640995200 / 86400  # day
@@ -17,9 +19,11 @@ jd2022 = 2459580.50000
 
 
 class RealData:
-    def __init__(self, file_directory):
+    def __init__(self, folder, file_directory):
         # Real data
-        self.data = pd.read_excel(file_directory)
+        self.folder_path = folder
+        self.file_name = file_directory
+        self.data = pd.read_excel(folder + file_directory)
         self.data.sort_values(by=['timestamp'], inplace=True)
         self.data.dropna(inplace=True)
         self.data['jd'] = [timestamp_to_julian(ts) for ts in self.data['timestamp'].values]
@@ -46,9 +50,34 @@ class RealData:
         print(line1, line2)
         return line1, line2
 
-    def calibrate_mag(self, scale: np.array = None, bias: np.array = None):
-        self.data[['mag_x', 'mag_y', 'mag_z']] = np.matmul(self.data[['mag_x', 'mag_y', 'mag_z']],
-                                                           (np.eye(3) + scale)) - bias
+    def calibrate_mag(self, scale: np.array = None, bias: np.array = None, mag_i: np.array = None, by_file=False):
+        if scale is not None and bias is not None:
+            self.data[['mag_x', 'mag_y', 'mag_z']] = np.matmul(self.data[['mag_x', 'mag_y', 'mag_z']],
+                                                               (np.eye(3) + scale)) - bias
+        elif mag_i is not None:
+            x_non_sol, sig3_non, x_lin_sol, sig3_lin = two_step(
+                self.data[['mag_x', 'mag_y', 'mag_z']].values[:len(mag_i)], np.asarray(mag_i))
+
+            data = {'D': list(x_non_sol[3:]), 'bias': list(x_non_sol[:3])}
+            with open(self.folder_path + "calibration_" + self.file_name.split('.')[0] + ".json", 'w') as f:
+                json.dump(data, f)
+                f.close()
+            print(x_non_sol, sig3_non, x_lin_sol, sig3_lin)
+        elif by_file:
+            with open(self.folder_path + "calibration_" + self.file_name.split('.')[0] + ".json") as data_file:
+                data_loaded = json.load(data_file)
+            d = np.asarray(data_loaded['D'])
+            scale = np.diag(d[:3])
+            scale[0, 1] = d[3]
+            scale[1, 0] = d[3]
+            scale[0, 2] = d[4]
+            scale[2, 0] = d[4]
+            scale[1, 2] = d[5]
+            scale[2, 1] = d[5]
+
+            bias = np.asarray(data_loaded['bias'])
+            self.data[['mag_x', 'mag_y', 'mag_z']] = np.matmul(self.data[['mag_x', 'mag_y', 'mag_z']],
+                                                               (np.eye(3) + scale)) - bias
 
     def set_window_time(self, start_str=None, stop_str=None, format_time=None):
         if start_str is None and stop_str is None and format_time is None:

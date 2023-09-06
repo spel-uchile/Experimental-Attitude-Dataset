@@ -37,13 +37,13 @@ class Monitor:
         self.vectors[name] = {'data': self.dataset[name],
                               'color': color}
 
-    def plot(self, x_dataset, y_dataset, xname=None, yname=None, title=None, step=True, scale=1, fft=False):
+    def plot(self, x_dataset, y_dataset, xname=None, yname=None, title=None, step=False, scale=1, fft=False):
         if fft:
             dataset = self.fft_dataset
         else:
             dataset = self.dataset
         fig = plt.figure()
-        plt.title(title)
+        plt.title(title if title is not None else y_dataset)
         plt.ylabel(yname)
         plt.xlabel(xname)
         plt.grid()
@@ -129,6 +129,10 @@ class Monitor3d:
         self.update(0)
 
         self.plotter3d.add_slider_widget(self.update, [0, len(self.sat_pos) - 1], value=0, title='Step')
+        # self.btn = self.plotter3d.add_checkbox_button_widget(self.forward, value=True)
+
+    def forward(self, flag):
+        self.update(np.min([self.last_index_ + 1, len(self.sat_pos) - 1]))
 
     def add_vectors(self, vectors_list):
         for key, item in vectors_list.items():
@@ -173,7 +177,10 @@ class Monitor3d:
             en = np.linalg.norm(vect_pos)
             ln = np.linalg.norm(last_vect_pos)
             rot_vec = np.cross(last_vect_pos, vect_pos) / (en * ln)
-            rot_vec /= np.linalg.norm(rot_vec)
+            if np.linalg.norm(rot_vec) > 1e-9:
+                rot_vec /= np.linalg.norm(rot_vec)
+            else:
+                rot_vec = np.zeros(3)
             ang_rot = np.arccos(np.dot(last_vect_pos, vect_pos) / (en * ln))
             arrow['model'].translate(relative_pos, inplace=True)
             arrow['model'].rotate_vector(vector=rot_vec, angle=np.rad2deg(ang_rot), point=sc_pos_i, inplace=True)

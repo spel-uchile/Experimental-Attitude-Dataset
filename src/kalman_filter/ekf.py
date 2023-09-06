@@ -3,6 +3,7 @@ Created by Elias Obreque
 els.obrq@gmail.com
 Date: 21-01-2023
 """
+import numpy as np
 
 from ..dynamics.Quaternion import Quaternions
 from sklearn.metrics import mean_squared_error
@@ -53,6 +54,8 @@ class EKF:
         self.internal_state, self.internal_cov_P = self.get_prediction(self.state, self.covariance_P, step)
 
     def inject_vector(self, vector_b, vector_i, sigma2):
+        vector_b = vector_b / np.linalg.norm(vector_b)
+        vector_i = vector_i / np.linalg.norm(vector_i)
         self.kf_R = sigma2 * np.eye(len(vector_i))
         new_z_k = self.get_observer_prediction(self.internal_state, vector_i)
         print("residual error: {}".format(np.rad2deg(1) * np.arccos(vector_b @ new_z_k)))
@@ -61,6 +64,7 @@ class EKF:
         self.get_kalman_gain(H, self.internal_cov_P)
         self.internal_state = self.update_state(self.internal_state, vector_b, new_z_k)
         self.internal_cov_P = self.update_covariance_P_matrix(H, self.internal_cov_P)
+
 
     def inject_vector_6(self, vector1_b, vector1_i, vector2_b, vector2_i, sigma1, sigma2):
         self.kf_R = sigma2 * np.eye(6)
@@ -177,7 +181,7 @@ class MEKF(EKF):
         self.current_bias = np.zeros(3)
         self.sigma_v = 0
         self.sigma_u = 0
-        self.historical = {'q': [], 'b': [np.zeros(3)]}
+        self.historical = {'q_est': [], 'b': [np.zeros(3)], 'mag_est': []}
 
     def add_reference_vector(self, vector):
         self.reference_vector = vector
@@ -189,7 +193,7 @@ class MEKF(EKF):
         value = value / np.linalg.norm(value)
         self.current_quaternion = value
         if save:
-            self.historical['q'].append(self.current_quaternion)
+            self.historical['q_est'].append(self.current_quaternion)
 
     def get_prediction(self, x_est, P_est, step, u_ctrl=np.zeros(3), measure=None):
         # new_x_k = self.attitude_discrete_mrp(x_est, u_ctrl, step)
@@ -295,7 +299,9 @@ class MEKF(EKF):
         return g_
 
     def get_observer_prediction(self, new_x_k, reference_vector):
-        return Quaternions(self.current_quaternion).frame_conv(reference_vector)
+        new_z_k = Quaternions(self.current_quaternion).frame_conv(reference_vector)
+        self.historical['mag_est'].append(new_z_k)
+        return new_z_k
 
     def get_observer_prediction_mrp(self, new_x_k, reference_vector):
         p_k = new_x_k[:3]
@@ -352,7 +358,7 @@ class MEKF(EKF):
         self.covariance_P = self.internal_cov_P
         self.state = np.zeros(6)
         self.internal_state = np.zeros(6)
-        self.historical['q'].append(self.current_quaternion)
+        self.historical['q_est'].append(self.current_quaternion)
         self.historical['b'].append(self.current_bias)
 
 
