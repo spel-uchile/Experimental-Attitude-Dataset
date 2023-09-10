@@ -6,8 +6,6 @@ email: els.obrq@gmail.com
 import numpy as np
 import datetime
 
-from data.value_mag_calibration import get_s3_mag_cal, get_s3_mag_cal_past
-
 from src.kalman_filter.ekf import MEKF
 
 from src.data_process import RealData
@@ -97,10 +95,11 @@ if __name__ == '__main__':
     # MEKF
     P = np.diag([0.5, 0.5, 0.5, 0.1, 0.1, 0.1])
     ekf_model = MEKF(inertia, P=P, Q=np.zeros((6, 6)), R=np.zeros((3, 3)))
-    ekf_model.sigma_u = 0.005
-    ekf_model.sigma_v = 0.001
+    ekf_model.sigma_u = 0.05
+    ekf_model.sigma_v = 0.01
     ekf_model.set_quat(q_i2b, save=True)
-    ekf_model.get_observer_prediction(None, mag_i[0]/np.linalg.norm(mag_i[0]))
+    ekf_model.get_observer_prediction(None, mag_i[0])
+
     k = 1
     while current_time < tend * 0.7:
         ekf_model.set_gyro_measure(omega_b)
@@ -119,7 +118,9 @@ if __name__ == '__main__':
 
         if k < len(sensors.data):
             omega_b = sensors.data[['acc_x', 'acc_y', 'acc_z']].values[k]
-            ekf_model.inject_vector(sensors.data[['mag_x', 'mag_y', 'mag_z']].values[k], mag_i[k], sigma2=0.1)
+            omega_b[0] = 0
+            omega_b[2] = 0
+            ekf_model.inject_vector(sensors.data[['mag_x', 'mag_y', 'mag_z']].values[k], mag_i[k], sigma2=0.001)
             ekf_model.reset_state()
             k += 1
 
