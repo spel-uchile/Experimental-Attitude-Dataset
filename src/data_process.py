@@ -34,7 +34,9 @@ class RealData:
                                  for ts in self.data['timestamp']]
 
     def plot_key(self, to_plot: list, show: bool = False):
-        self.data[to_plot].plot()
+        plt.figure()
+        plt.grid()
+        plt.step(self.data['jd'], self.data[to_plot])
         plt.show() if show else None
 
     def search_nearly_tle(self):

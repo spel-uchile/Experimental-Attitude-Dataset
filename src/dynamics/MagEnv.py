@@ -12,6 +12,7 @@ class MagEnv(object):
     def __init__(self):
         self.Mag_i = np.zeros(3)
         self.Mag_b = np.zeros(3)
+        self.Mag_e = np.zeros(3)
 
     def update(self, lat, lon, alt, decyear, sideral, q_i2b):
         self.calc_mag(decyear, sideral, lat, lon, alt)
@@ -28,7 +29,7 @@ class MagEnv(object):
         mag_local = [x, y, z]
 
         self.mag_NED_to_ECI(mag_local, gccolat, lon, sideral)
-        return self.Mag_i
+        return self.Mag_i, self.Mag_e
 
     def add_mag_noise(self):
         return
@@ -36,6 +37,7 @@ class MagEnv(object):
     def mag_NED_to_ECI(self, mag_0, theta, lonrad, gmst):
         mag_local_0y = rotationY(mag_0, np.pi - theta)
         mag_local_yz = rotationZ(mag_local_0y, -lonrad)
+        self.Mag_e = mag_local_yz
         self.Mag_i = rotationZ(mag_local_yz, -gmst)
 
     def get_mag_b(self):

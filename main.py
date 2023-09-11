@@ -3,11 +3,12 @@ Created by Elias Obreque
 Date: 04-09-2023
 email: els.obrq@gmail.com
 """
+import matplotlib.pyplot as plt
 import numpy as np
 import datetime
 
-from src.kalman_filter.ekf import MEKF
-
+from src.kalman_filter.ekf_multy import MEKF
+from src.kalman_filter.ekf_mag_calibration import MagEKF
 from src.data_process import RealData
 from src.dynamics.dynamics_kinematics import *
 from src.dynamics.Quaternion import Quaternions
@@ -29,7 +30,7 @@ WINDOW_TIME = {'Start': '2023/08/24 10:44:09',
                'FLAG': True}
 TIME_FORMAT = "%Y/%m/%d %H:%M:%S"
 
-
+ONLINE_MAG_CALIBRATION = False
 CREATE_FRAME = False
 
 if __name__ == '__main__':
@@ -52,7 +53,7 @@ if __name__ == '__main__':
     stop_datetime = datetime.datetime.strptime(WINDOW_TIME['Stop'], TIME_FORMAT)
     print(start_datetime.timestamp(), stop_datetime.timestamp())
 
-    # Calibration
+    # Inertial Parameters
     mag_model = MagEnv()
     time_vector = sensors.data['jd'].values
     sat_state = np.asarray([calc_sat_pos_i(line1, line2, cj) for cj in time_vector])
@@ -61,15 +62,29 @@ if __name__ == '__main__':
     sun_pos = np.asarray([calc_sun_pos_i(c_j) for c_j in time_vector])
     sat_lla = np.asarray([calc_geod_lat_lon_alt(sat_pos_, cj) for sat_pos_, cj in zip(sat_pos, time_vector)])
     lat, lon, alt, sideral = sat_lla[:, 0], sat_lla[:, 1], sat_lla[:, 2], sat_lla[:, 3]
-    mag_i = np.asarray([mag_model.calc_mag(c_j, s_, lat_, lon_, alt_)
-                        for c_j, s_, lat_, lon_, alt_ in zip(time_vector, sideral, lat, lon, alt)])
+    mag_i_e = np.asarray([mag_model.calc_mag(c_j, s_, lat_, lon_, alt_)
+                          for c_j, s_, lat_, lon_, alt_ in zip(time_vector, sideral, lat, lon, alt)])
+    mag_i = mag_i_e[:, 0, :]
+    mag_e = mag_i_e[:, 1, :]
+    # calibration
+    ekf_mag_cal = None
+    new_sensor = []
+    if not ONLINE_MAG_CALIBRATION:
+        # sensors.calibrate_mag(mag_i=mag_i)
+        sensors.calibrate_mag(by_file=True)
+    else:
+        sensors.calibrate_mag(by_file=True)
+        ekf_mag_cal = MagEKF()
+        for mag_i_, mag_b_ in zip(mag_i, sensors.data[['mag_x', 'mag_y', 'mag_z']].values):
+            ekf_mag_cal.update_state(mag_b_, mag_i_)
+            bias_, D_scale = ekf_mag_cal.get_calibration()
+            new_sensor.append((np.eye(3) + D_scale) @ mag_b_ - bias_)
+        ekf_mag_cal.plot(new_sensor)
 
-    # sensors.calibrate_mag(mag_i=mag_i)
-    sensors.calibrate_mag(by_file=True)
     # plot
     sensors.plot_key(['mag_x', 'mag_y', 'mag_z'])
     # sensors.plot_key(['acc_x', 'acc_y', 'acc_z'])
-    # sensors.plot_key(['sun3', 'sun2', 'sun4'])
+    sensors.plot_key(['sun3', 'sun2', 'sun4'], show=True)
 
     # SIMULATION
     current_time = 0
@@ -83,7 +98,7 @@ if __name__ == '__main__':
     channels = {'full_time': time_vector,
                 'sim_time': [current_time],
                 'sat_pos_i': sat_pos,
-                'lonlat': np.array([lon, lat]),
+                'lonlat': np.array([lon, lat]).T * RAD2DEG,
                 'sat_vel_i': sat_vel,
                 'q_i2b': [q_i2b],
                 'omega_b': [omega_b],
@@ -101,7 +116,7 @@ if __name__ == '__main__':
     ekf_model.get_observer_prediction(None, mag_i[0])
 
     k = 1
-    while current_time < tend * 0.7:
+    while current_time < tend * 0.1:
         ekf_model.set_gyro_measure(omega_b)
 
         # # integration
@@ -118,8 +133,6 @@ if __name__ == '__main__':
 
         if k < len(sensors.data):
             omega_b = sensors.data[['acc_x', 'acc_y', 'acc_z']].values[k]
-            omega_b[0] = 0
-            omega_b[2] = 0
             ekf_model.inject_vector(sensors.data[['mag_x', 'mag_y', 'mag_z']].values[k], mag_i[k], sigma2=0.001)
             ekf_model.reset_state()
             k += 1
@@ -141,11 +154,13 @@ if __name__ == '__main__':
     monitor.add_vector('mag_i', color='red')
 
     monitor.plot(x_dataset='full_time', y_dataset='mag_i')
-    monitor.plot(x_dataset='sim_time', y_dataset='mag_b')
-    # monitor.plot(x_dataset='time', y_dataset='lonlat')
-    # monitor.plot(x_dataset='time', y_dataset='sun_i')
+    monitor.plot(x_dataset='full_time', y_dataset='lonlat')
+    monitor.plot(x_dataset='full_time', y_dataset='sun_i')
+    monitor.plot(x_dataset='full_time', y_dataset='sat_pos_i')
     monitor.plot(x_dataset='sim_time', y_dataset='q_i2b')
     monitor.plot(x_dataset='sim_time', y_dataset='omega_b')
+
+    monitor.plot(x_dataset='sim_time', y_dataset='mag_b')
     # ekf
     monitor.plot(x_dataset='sim_time', y_dataset='b')
     monitor.plot(x_dataset='sim_time', y_dataset='q_est')
