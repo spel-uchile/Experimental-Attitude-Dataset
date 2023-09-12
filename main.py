@@ -9,6 +9,7 @@ import datetime
 
 from src.kalman_filter.ekf_multy import MEKF
 from src.kalman_filter.ekf_mag_calibration import MagEKF
+from src.kalman_filter.ekf_full import MEKF_FULL
 from src.data_process import RealData
 from src.dynamics.dynamics_kinematics import *
 from src.dynamics.Quaternion import Quaternions
@@ -32,6 +33,8 @@ TIME_FORMAT = "%Y/%m/%d %H:%M:%S"
 
 ONLINE_MAG_CALIBRATION = False
 CREATE_FRAME = False
+EKF_SETUP = 'NORMAL'
+
 
 if __name__ == '__main__':
     if CREATE_FRAME:
@@ -65,7 +68,7 @@ if __name__ == '__main__':
     mag_i_e = np.asarray([mag_model.calc_mag(c_j, s_, lat_, lon_, alt_)
                           for c_j, s_, lat_, lon_, alt_ in zip(time_vector, sideral, lat, lon, alt)])
     mag_i = mag_i_e[:, 0, :]
-    mag_e = mag_i_e[:, 1, :]
+    mag_ned = mag_i_e[:, 1, :]
     # calibration
     ekf_mag_cal = None
     new_sensor = []
@@ -83,8 +86,8 @@ if __name__ == '__main__':
 
     # plot
     sensors.plot_key(['mag_x', 'mag_y', 'mag_z'])
-    # sensors.plot_key(['acc_x', 'acc_y', 'acc_z'])
-    sensors.plot_key(['sun3', 'sun2', 'sun4'], show=True)
+    sensors.plot_key(['acc_x', 'acc_y', 'acc_z'])
+    sensors.plot_key(['sun3', 'sun2', 'sun4'])
 
     # SIMULATION
     current_time = 0
@@ -103,27 +106,36 @@ if __name__ == '__main__':
                 'q_i2b': [q_i2b],
                 'omega_b': [omega_b],
                 'mag_i': mag_i,
+                'mag_ned': mag_ned,
                 'mag_b': [mag_b],
                 'sun_i': sun_pos,
                 'sideral': sideral}
 
-    # MEKF
-    P = np.diag([0.5, 0.5, 0.5, 0.1, 0.1, 0.1])
-    ekf_model = MEKF(inertia, P=P, Q=np.zeros((6, 6)), R=np.zeros((3, 3)))
-    ekf_model.sigma_u = 0.05
-    ekf_model.sigma_v = 0.01
+    if EKF_SETUP == 'NORMAL':
+        # MEKF
+        P = np.diag([0.5, 0.5, 0.5, 0.01, 0.01, 0.01])
+        ekf_model = MEKF(inertia, P=P, Q=np.zeros((6, 6)), R=np.zeros((3, 3)))
+        ekf_model.sigma_bias = 0.05
+        ekf_model.sigma_omega = 0.05
+    elif EKF_SETUP == 'FULL':
+        # MEKF
+        P = np.diag([0.5, 0.5, 0.5, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01 ])
+        ekf_model = MEKF_FULL(inertia, P=P, Q=np.zeros((15, 15)), R=np.zeros((3, 3)))
+        ekf_model.sigma_bias = 0.05
+        ekf_model.sigma_omega = 0.05
+
     ekf_model.set_quat(q_i2b, save=True)
     ekf_model.get_observer_prediction(None, mag_i[0])
-
+    omega_b_model = omega_b
     k = 1
-    while current_time < tend * 0.1:
+    while current_time < tend * 0.2:
         ekf_model.set_gyro_measure(omega_b)
 
         # # integration
         ekf_model.propagate(dt)
 
-        q_i2b = calc_quaternion(q_i2b, omega_b, dt)
-        # omega_b = calc_omega_b(omega_b, dt)
+        q_i2b = calc_quaternion(q_i2b, omega_b_model, dt)
+        omega_b_model = calc_omega_b(omega_b_model, dt)
 
         # update time
         current_time = np.round(current_time + dt, 5)
@@ -133,14 +145,14 @@ if __name__ == '__main__':
 
         if k < len(sensors.data):
             omega_b = sensors.data[['acc_x', 'acc_y', 'acc_z']].values[k]
-            ekf_model.inject_vector(sensors.data[['mag_x', 'mag_y', 'mag_z']].values[k], mag_i[k], sigma2=0.001)
+            ekf_model.inject_vector(sensors.data[['mag_x', 'mag_y', 'mag_z']].values[k], mag_i[k], sigma2=0.03)
             ekf_model.reset_state()
             k += 1
 
         # save data
         channels['sim_time'].append(current_time)
         channels['q_i2b'].append(q_i2b)
-        channels['omega_b'].append(omega_b)
+        channels['omega_b'].append(omega_b_model)
         channels['mag_b'].append(mag_b)
 
         print(current_time, tend, k)
@@ -154,9 +166,9 @@ if __name__ == '__main__':
     monitor.add_vector('mag_i', color='red')
 
     monitor.plot(x_dataset='full_time', y_dataset='mag_i')
-    monitor.plot(x_dataset='full_time', y_dataset='lonlat')
-    monitor.plot(x_dataset='full_time', y_dataset='sun_i')
-    monitor.plot(x_dataset='full_time', y_dataset='sat_pos_i')
+    # monitor.plot(x_dataset='full_time', y_dataset='lonlat')
+    # monitor.plot(x_dataset='full_time', y_dataset='sun_i')
+    # monitor.plot(x_dataset='full_time', y_dataset='sat_pos_i')
     monitor.plot(x_dataset='sim_time', y_dataset='q_i2b')
     monitor.plot(x_dataset='sim_time', y_dataset='omega_b')
 

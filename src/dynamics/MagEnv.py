@@ -29,7 +29,7 @@ class MagEnv(object):
         mag_local = [x, y, z]
 
         self.mag_NED_to_ECI(mag_local, gccolat, lon, sideral)
-        return self.Mag_i, self.Mag_e
+        return self.Mag_i, np.array(mag_local)
 
     def add_mag_noise(self):
         return

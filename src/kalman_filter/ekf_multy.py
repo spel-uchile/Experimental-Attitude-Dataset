@@ -21,8 +21,8 @@ class MEKF(EKF):
         self.reference_vector = np.zeros(3)
         self.current_quaternion = np.zeros(4)
         self.current_bias = np.zeros(3)
-        self.sigma_v = 0
-        self.sigma_u = 0
+        self.sigma_omega = 0
+        self.sigma_bias = 0
         self.historical = {'q_est': [], 'b': [np.zeros(3)], 'mag_est': []}
 
     def add_reference_vector(self, vector):
@@ -49,9 +49,12 @@ class MEKF(EKF):
         f_x[:3, :3] = -skew(omega)
         f_x[:3, 3:] = -np.identity(3)
 
-        self.kf_Q[:3, :3] = np.identity(3) * (self.sigma_v ** 2 * step + 1/3 * self.sigma_u ** 2 * step ** 3)
-        self.kf_Q[3:, 3:] = np.identity(3) * self.sigma_u ** 2 * step
-        phi = (np.eye(6) + f_x) * step
+        self.kf_Q[:3, :3] = np.identity(3) * (self.sigma_omega ** 2 * step + 1 / 3 * self.sigma_bias ** 2 * step ** 3)
+        self.kf_Q[3:, 3:] = np.identity(3) * self.sigma_bias ** 2 * step
+        self.kf_Q[:3, 3:] = - np.identity(3) * 0.5 * self.sigma_bias ** 2 * step ** 2
+        self.kf_Q[3:, :3] = - np.identity(3) * 0.5 * self.sigma_bias ** 2 * step ** 2
+
+        phi = (np.eye(6) + f_x + 0.5 * f_x @ f_x * step) * step
         new_p_k = phi.dot(self.covariance_P).dot(phi.T) + self.kf_Q
         return new_p_k
 
@@ -61,10 +64,10 @@ class MEKF(EKF):
         F_x[:3, 3:] = self.get_discrete_psi(step, omega)
         F_x[3:, 3:] = np.identity(3)
 
-        self.kf_Q[:3, :3] = np.identity(3) * (self.sigma_v ** 2 * step + 1/3 * self.sigma_u ** 2 * step ** 3)
-        self.kf_Q[3:, :3] = - np.identity(3) * 0.5 * self.sigma_u ** 2 * step ** 2
-        self.kf_Q[:3, 3:] = - np.identity(3) * 0.5 * self.sigma_u ** 2 * step ** 2
-        self.kf_Q[3:, 3:] = np.identity(3) * self.sigma_u ** 2 * step
+        self.kf_Q[:3, :3] = np.identity(3) * (self.sigma_omega ** 2 * step + 1 / 3 * self.sigma_bias ** 2 * step ** 3)
+        self.kf_Q[3:, :3] = - np.identity(3) * 0.5 * self.sigma_bias ** 2 * step ** 2
+        self.kf_Q[:3, 3:] = - np.identity(3) * 0.5 * self.sigma_bias ** 2 * step ** 2
+        self.kf_Q[3:, 3:] = np.identity(3) * self.sigma_bias ** 2 * step
         new_p_k = F_x @ self.covariance_P @ F_x.T + F_x @ self.kf_Q @ F_x.T
         return new_p_k
 
@@ -132,7 +135,7 @@ class MEKF(EKF):
         current_quaternion = error_q * Quaternions(self.current_quaternion)
         current_quaternion.normalize()
         self.current_quaternion = current_quaternion()
-        # self.current_bias += self.internal_state[3:]
+        self.current_bias += self.internal_state[3:]
         self.covariance_P = self.internal_cov_P
         self.state = np.zeros(6)
         self.internal_state = np.zeros(6)

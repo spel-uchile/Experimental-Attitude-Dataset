@@ -149,7 +149,7 @@ class MagEKF():
 
     @staticmethod
     def update_error_P(p_k_, h_k_, k_k_):
-        return (np.eye(9) - np.outer(k_k_, h_k_)) @ p_k_
+        return (np.eye(9) - k_k_.reshape(-1, 1) @ h_k_.reshape(-1, 1).T) @ p_k_
 
     @staticmethod
     def update_error_K(P_k, H_k, sigma_2_):

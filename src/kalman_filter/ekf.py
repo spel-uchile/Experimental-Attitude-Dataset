@@ -64,7 +64,6 @@ class EKF:
         self.internal_state = self.update_state(self.internal_state, vector_b, new_z_k)
         self.internal_cov_P = self.update_covariance_P_matrix(H, self.internal_cov_P)
 
-
     def inject_vector_6(self, vector1_b, vector1_i, vector2_b, vector2_i, sigma1, sigma2):
         self.kf_R = sigma2 * np.eye(6)
         new_z_k1 = self.get_observer_prediction(self.internal_state, vector1_i)
@@ -130,7 +129,7 @@ class EKF:
 
     def update_covariance_P_matrix(self, H, new_P_k):
         I_nn = np.eye(len(self.state))
-        new_P = (I_nn - self.kf_K @ H) @ new_P_k @ (I_nn - self.kf_K @ H).T #+ self.kf_K @ self.kf_R @ self.kf_K.T
+        new_P = (I_nn - self.kf_K @ H) @ new_P_k @ (I_nn - self.kf_K @ H).T + self.kf_K @ self.kf_R @ self.kf_K.T
         return new_P
 
     def attitude_observer_model(self, new_x, vector_i) -> np.array:
@@ -209,8 +208,8 @@ if __name__ == "__main__":
     ekf_mrp.set_first_state(np.zeros(6))
     ekf_mrp.set_gyro_measure(gyro_b_sensor[0])
     ekf_mrp.set_quat(q_i2b_model[0] + np.random.normal(0, 0.2, size=4) * float(NOISE), save=True)
-    ekf_mrp.sigma_u = 0.0 if not NOISE else sd_u
-    ekf_mrp.sigma_v = 0.0 if not NOISE else sd_v
+    ekf_mrp.sigma_bias = 0.0 if not NOISE else sd_u
+    ekf_mrp.sigma_omega = 0.0 if not NOISE else sd_v
 
     hist_cov_P = [P_k.flatten()]
     hist_state.append(ekf_mrp.get_state())
