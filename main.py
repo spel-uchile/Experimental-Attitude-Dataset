@@ -33,7 +33,7 @@ TIME_FORMAT = "%Y/%m/%d %H:%M:%S"
 
 ONLINE_MAG_CALIBRATION = False
 CREATE_FRAME = False
-EKF_SETUP = 'NORMAL'
+EKF_SETUP = 'FULL'
 
 
 if __name__ == '__main__':
@@ -119,7 +119,7 @@ if __name__ == '__main__':
         ekf_model.sigma_omega = 0.05
     elif EKF_SETUP == 'FULL':
         # MEKF
-        P = np.diag([0.5, 0.5, 0.5, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01 ])
+        P = np.diag([0.5, 0.5, 0.5, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01])
         ekf_model = MEKF_FULL(inertia, P=P, Q=np.zeros((15, 15)), R=np.zeros((3, 3)))
         ekf_model.sigma_bias = 0.05
         ekf_model.sigma_omega = 0.05
@@ -127,9 +127,9 @@ if __name__ == '__main__':
     ekf_model.set_quat(q_i2b, save=True)
     ekf_model.get_observer_prediction(None, mag_i[0])
     omega_b_model = omega_b
+    ekf_model.set_gyro_measure(omega_b)
     k = 1
-    while current_time < tend * 0.2:
-        ekf_model.set_gyro_measure(omega_b)
+    while current_time < tend * 0.5:
 
         # # integration
         ekf_model.propagate(dt)
@@ -144,9 +144,11 @@ if __name__ == '__main__':
         mag_b = Quaternions(q_i2b).frame_conv(mag_i[k])
 
         if k < len(sensors.data):
-            omega_b = sensors.data[['acc_x', 'acc_y', 'acc_z']].values[k]
-            ekf_model.inject_vector(sensors.data[['mag_x', 'mag_y', 'mag_z']].values[k], mag_i[k], sigma2=0.03)
+            ekf_model.inject_vector(sensors.data[['mag_x', 'mag_y', 'mag_z']].values[k], mag_i[k], sigma2=0.01)
             ekf_model.reset_state()
+
+            omega_b = sensors.data[['acc_x', 'acc_y', 'acc_z']].values[k]
+            ekf_model.set_gyro_measure(omega_b)
             k += 1
 
         # save data
@@ -176,7 +178,11 @@ if __name__ == '__main__':
     # ekf
     monitor.plot(x_dataset='sim_time', y_dataset='b')
     monitor.plot(x_dataset='sim_time', y_dataset='q_est')
+    monitor.plot(x_dataset='sim_time', y_dataset='omega_est')
     monitor.plot(x_dataset='sim_time', y_dataset='mag_est')
+    monitor.plot(x_dataset='sim_time', y_dataset='scale')
+    monitor.plot(x_dataset='sim_time', y_dataset='ku')
+    monitor.plot(x_dataset='sim_time', y_dataset='kl')
     monitor.show_monitor()
     monitor.plot3d()
 

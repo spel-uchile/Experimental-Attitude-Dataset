@@ -19,7 +19,7 @@ class MEKF_FULL(EKF):
     def __init__(self, inertia, R, Q, P):
         super().__init__(inertia, R, Q, P)
         self.current_measure = np.zeros(3)
-        self.omega_state = np.zeros(3)
+        self.omega_m = np.zeros(3)
         self.current_quaternion = np.zeros(4)
 
         self.theta_error = np.zeros(3)
@@ -27,15 +27,17 @@ class MEKF_FULL(EKF):
         self.scale = np.zeros(3)
         self.k_l = np.zeros(3)
         self.k_u = np.zeros(3)
-        self.sigma2_elements = np.zeros(5)
+        self.sigma2_elements = np.ones(5) * 100
 
-        self.historical = {'q_est': [], 'b': [np.zeros(3)], 'mag_est': []}
-
-    def get_x_state(self):
-        return np.array([*self.theta_error, *self.current_bias, *self.scale, *self.k_u,  *self.k_l])
+        self.historical = {'q_est': [], 'b': [np.zeros(3)], 'mag_est': [], 'omega_est': [],
+                           'scale': [np.zeros(3)], 'ku': [np.zeros(3)], 'kl': [np.zeros(3)]}
 
     def set_gyro_measure(self, value):
-        self.omega_state = value
+        self.omega_m = value
+        self.historical['omega_est'].append(self.get_calibrate_omega())
+
+    def get_calibrate_omega(self):
+        return (np.eye(3) - self.get_scale()) @ (self.omega_m - self.current_bias)
 
     def set_quat(self, value, save=False):
         value = value / np.linalg.norm(value)
@@ -44,9 +46,9 @@ class MEKF_FULL(EKF):
             self.historical['q_est'].append(self.current_quaternion)
 
     def get_prediction(self, x_est, P_est, step, u_ctrl=np.zeros(3), measure=None):
-        omega = (np.eye(3) - self.get_scale()) @ (self.omega_state - self.current_bias)
+        omega = self.get_calibrate_omega()
         self.current_quaternion = self.attitude_discrete(self.current_quaternion, omega, step)
-        new_x_k = np.zeros(6)
+        new_x_k = np.zeros(15)
         new_P_k = self.propagate_cov_P_sim(step, omega)
         return new_x_k, new_P_k
 
@@ -54,7 +56,7 @@ class MEKF_FULL(EKF):
         f_x = np.zeros((15, 15))
         f_x[:3, :3] = -skew(omega)
         f_x[:3, 3:6] = -(np.identity(3) - self.get_scale())
-        f_x[:3, 6:9] = -np.diag(self.omega_state - self.current_bias)
+        f_x[:3, 6:9] = -np.diag(self.omega_m - self.current_bias)
         f_x[:3, 9:12] = -self.get_u()
         f_x[:3, 12:] = -self.get_l()
 
@@ -63,14 +65,14 @@ class MEKF_FULL(EKF):
 
         q_ = np.eye(15) * np.kron(self.sigma2_elements, np.ones(3))
 
-        phi = (np.eye(6) + f_x + 0.5 * f_x @ f_x * step) * step
+        phi = (np.eye(15) + f_x + 0.5 * f_x @ f_x * step) * step
 
         kf_q = g_x @ q_ @ g_x.T * step
         new_p_k = phi.dot(self.covariance_P).dot(phi.T) + kf_q
         return new_p_k
 
     def get_u(self):
-        temp = self.omega_state - self.current_bias
+        temp = self.omega_m - self.current_bias
         u_ = np.zeros((3, 3))
         u_[0, 0] = temp[1]
         u_[0, 1] = temp[2]
@@ -78,7 +80,7 @@ class MEKF_FULL(EKF):
         return u_
 
     def get_l(self):
-        temp = self.omega_state - self.current_bias
+        temp = self.omega_m - self.current_bias
         l_ = np.zeros((3, 3))
         l_[1, 0] = temp[0]
         l_[2, 1] = temp[0]
@@ -162,6 +164,7 @@ class MEKF_FULL(EKF):
         return new_x
 
     def reset_state(self):
+        # theta error
         dot_error = self.internal_state[:3] @ self.internal_state[:3]
         if dot_error < 1:
             error_q = Quaternions(np.array([*self.internal_state[:3] * 0.5,
@@ -173,13 +176,100 @@ class MEKF_FULL(EKF):
         current_quaternion = error_q * Quaternions(self.current_quaternion)
         current_quaternion.normalize()
         self.current_quaternion = current_quaternion()
-        self.current_bias += self.internal_state[3:]
+        # bias error
+        self.current_bias += self.internal_state[3:6]
+        # scale error
+        self.scale += self.internal_state[6:9]
+        # kup
+        self.k_u += self.internal_state[9:12]
+        # klp
+        self.k_l += self.internal_state[12:]
         self.covariance_P = self.internal_cov_P
-        self.state = np.zeros(6)
-        self.internal_state = np.zeros(6)
+        self.state = np.zeros(15)
+        self.internal_state = np.zeros(15)
+
         self.historical['q_est'].append(self.current_quaternion)
         self.historical['b'].append(self.current_bias)
+        self.historical['scale'].append(self.scale)
+        self.historical['ku'].append(self.k_u)
+        self.historical['kl'].append(self.k_l)
 
 
 if __name__ == '__main__':
-    pass
+    import numpy as np
+    from src.dynamics.dynamics_kinematics import calc_quaternion
+    from src.dynamics.Quaternion import Quaternions
+
+    tend = 90 * 60
+    dt = 1
+    R = np.eye(3) * 36  # arc sec2
+    s_true = np.diag([1500, 1000, 1500]) # ppm
+    s_true[0, 1] = 1000
+    s_true[0, 2] = 1500
+    s_true[1, 2] = 2000
+
+    s_true[1, 0] = 500
+    s_true[2, 0] = 1000
+    s_true[2, 1] = 1500
+
+    s_true *= 1e-6
+
+    bias_true = np.ones(3) * 0.1 * np.deg2rad(1)
+    sigma_bias = np.sqrt(10) * 1e-10
+    sigma_omega = np.sqrt(10) * 1e-7
+    sigma_scale = 0
+    sigma_ku = 0
+    sigma_kl = 0
+
+
+    def get_error_quat(q_m, q_p):
+        q_m_c = Quaternions(q_m)
+        q_p_c = Quaternions(q_p)
+        q_temp = q_m_c * Quaternions(q_p_c.conjugate())
+        theta_error = 2 * q_temp()[:3] / q_temp()[3]
+        return theta_error
+
+    def omega_true(t_):  # deg/sec - rad/sec
+        return np.array([np.sin(0.01 * t_),
+                         np.sin(0.0085 * t_),
+                         np.cos(0.0085 * t_)]) * 0.1 * np.deg2rad(1)
+
+    def gyro_model(t_, old_bias):
+        new_bias = old_bias + sigma_bias * dt ** 0.5 * np.random.normal(0, 1, size=3)
+        ot = omega_true(t_)
+        return (((np.eye(3) + s_true) @ ot + 0.5 * (new_bias + old_bias) +
+                (sigma_omega ** 2 / dt + 1/12 * sigma_bias**2 * dt) ** 0.5 * np.random.normal(0, 1, size=3)),
+                new_bias)
+
+
+    P = np.ones((15, 15))
+    P[:3, :3] = (6 / 3600) ** 2 * np.eye(3)
+    P[3:6, 3:6] = (0.2 / 3600) ** 2 * np.eye(3)
+    P[6:9, 6:9] = (0.002 / 3) ** 2 * np.eye(3)
+    P[9:12, 9:12] = (0.002 / 3) ** 2 * np.eye(3)
+    P[12:, 12:] = (0.002 / 3) ** 2 * np.eye(3)
+
+    q0 = np.sqrt(2) / 2 * np.array([1, 0, 0, 1])
+    ekf_full_cal = MEKF_FULL(None, R, Q=np.zeros(15), P=P)
+    bias_true, gyro_t = gyro_model(0, bias_true)
+    ekf_full_cal.set_gyro_measure(gyro_model(0, bias_true))
+    ekf_full_cal.set_quat(q0, save=True)
+
+    historical = {'q_true': [q0], 'omega_true': [omega_true(0)]}
+    ct = 0
+    while ct <= tend:
+        new_q_true = calc_quaternion(q0, omega_true(ct), dt)
+        ekf_full_cal.propagate(dt)
+
+        ekf_full_cal.inject_vector()
+
+        ct += dt
+
+        q0 = new_q_true
+        historical['q_true'].append(q0)
+        historical['omega_true'].append(omega_true(ct))
+
+
+
+
+
