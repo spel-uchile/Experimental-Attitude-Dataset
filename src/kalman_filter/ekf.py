@@ -16,10 +16,10 @@ w_orbit = np.array([0, - 2 * np.pi * rev_day / 86400, 0])
 
 class EKF:
     def __init__(self, inertia, R, Q, P):
-        self.inertia = inertia
+        # self.inertia = inertia
         self.init_state_save = False
-        inv_inertia = np.linalg.inv(inertia)
-        self.inv_inertia = inv_inertia
+        # inv_inertia = np.linalg.inv(inertia)
+        # self.inv_inertia = inv_inertia
         self.kf_R = R
         self.kf_Q = Q
         self.dim_rows = len(R)

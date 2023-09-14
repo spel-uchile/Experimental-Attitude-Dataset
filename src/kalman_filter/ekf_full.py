@@ -3,12 +3,13 @@ Created by Elias Obreque
 Date: 10-09-2023
 email: els.obrq@gmail.com
 """
+import matplotlib.pyplot as plt
 import numpy as np
 
-from ..dynamics.Quaternion import Quaternions
+from src.dynamics.Quaternion import Quaternions
 from sklearn.metrics import mean_squared_error
 from tools.tools import *
-from .ekf import EKF
+from src.kalman_filter.ekf import EKF
 
 
 class MEKF_FULL(EKF):
@@ -68,7 +69,7 @@ class MEKF_FULL(EKF):
         phi = (np.eye(15) + f_x + 0.5 * f_x @ f_x * step) * step
 
         kf_q = g_x @ q_ @ g_x.T * step
-        new_p_k = phi.dot(self.covariance_P).dot(phi.T) + kf_q
+        new_p_k = phi.dot(self.covariance_P).dot(phi.T) # + kf_q
         return new_p_k
 
     def get_u(self):
@@ -166,11 +167,11 @@ class MEKF_FULL(EKF):
     def reset_state(self):
         # theta error
         dot_error = self.internal_state[:3] @ self.internal_state[:3]
-        if dot_error < 1:
-            error_q = Quaternions(np.array([*self.internal_state[:3] * 0.5,
-                                            np.sqrt(1 - dot_error)]))
-        else:
-            error_q = Quaternions(np.array([*self.internal_state[:3] * 0.5, 1]) / np.sqrt(1 + dot_error))
+        # if dot_error < 1:
+        #     error_q = Quaternions(np.array([*self.internal_state[:3] * 0.5,
+        #                                     np.sqrt(1 - dot_error)]))
+        # else:
+        error_q = Quaternions(np.array([*self.internal_state[:3] * 0.5, 1]) / np.sqrt(1 + dot_error))
         error_q.normalize()
         # diff = error_q * Quaternions(self.current_quaternion)
         current_quaternion = error_q * Quaternions(self.current_quaternion)
@@ -197,24 +198,26 @@ class MEKF_FULL(EKF):
 
 if __name__ == '__main__':
     import numpy as np
+    from tools.monitor import Monitor
     from src.dynamics.dynamics_kinematics import calc_quaternion
     from src.dynamics.Quaternion import Quaternions
 
     tend = 90 * 60
     dt = 1
-    R = np.eye(3) * 36  # arc sec2
-    s_true = np.diag([1500, 1000, 1500]) # ppm
-    s_true[0, 1] = 1000
-    s_true[0, 2] = 1500
-    s_true[1, 2] = 2000
 
-    s_true[1, 0] = 500
-    s_true[2, 0] = 1000
-    s_true[2, 1] = 1500
+    R = 36 * 4.8481e-6 ** 2  # rad 2
+    s_true = np.diag([1500.0, 1000.0, 1500.0]) # ppm
+    s_true[0, 1] = 1000.0
+    s_true[0, 2] = 1500.0
+    s_true[1, 2] = 2000.0
+
+    s_true[1, 0] = 500.0
+    s_true[2, 0] = 1000.0
+    s_true[2, 1] = 1500.0
 
     s_true *= 1e-6
 
-    bias_true = np.ones(3) * 0.1 * np.deg2rad(1)
+    bias_true = np.ones(3) * 0.1 * np.deg2rad(1) / 86400
     sigma_bias = np.sqrt(10) * 1e-10
     sigma_omega = np.sqrt(10) * 1e-7
     sigma_scale = 0
@@ -229,15 +232,14 @@ if __name__ == '__main__':
         theta_error = 2 * q_temp()[:3] / q_temp()[3]
         return theta_error
 
-    def omega_true(t_):  # deg/sec - rad/sec
+    def get_omega_true(t_):  # deg/sec - rad/sec
         return np.array([np.sin(0.01 * t_),
                          np.sin(0.0085 * t_),
                          np.cos(0.0085 * t_)]) * 0.1 * np.deg2rad(1)
 
-    def gyro_model(t_, old_bias):
+    def gyro_model(old_bias, omega_t_):
         new_bias = old_bias + sigma_bias * dt ** 0.5 * np.random.normal(0, 1, size=3)
-        ot = omega_true(t_)
-        return (((np.eye(3) + s_true) @ ot + 0.5 * (new_bias + old_bias) +
+        return (((np.eye(3) + s_true) @ omega_t_ + 0.5 * (new_bias + old_bias) +
                 (sigma_omega ** 2 / dt + 1/12 * sigma_bias**2 * dt) ** 0.5 * np.random.normal(0, 1, size=3)),
                 new_bias)
 
@@ -249,27 +251,66 @@ if __name__ == '__main__':
     P[9:12, 9:12] = (0.002 / 3) ** 2 * np.eye(3)
     P[12:, 12:] = (0.002 / 3) ** 2 * np.eye(3)
 
+    # true
+    time_list = np.arange(0, tend, 1)
+    omega_true = np.array([get_omega_true(t_) for t_ in time_list])
     q0 = np.sqrt(2) / 2 * np.array([1, 0, 0, 1])
-    ekf_full_cal = MEKF_FULL(None, R, Q=np.zeros(15), P=P)
-    bias_true, gyro_t = gyro_model(0, bias_true)
-    ekf_full_cal.set_gyro_measure(gyro_model(0, bias_true))
+    q_i2b_true = [q0]
+    for ot_ in omega_true[:-1]:
+        q_i2b_true.append(calc_quaternion(q_i2b_true[-1], ot_, dt))
+
+    q_i2b_true = np.asarray(q_i2b_true)
+
+    fig_, axes = plt.subplots(1, 2)
+    axes[0].grid()
+    axes[0].plot(time_list, q_i2b_true)
+    axes[1].grid()
+    axes[1].plot(time_list, omega_true)
+
+    # model
+    gyro_bias = [bias_true]
+    gyro_sensor = [(np.eye(3) + s_true) @ omega_true[0] + bias_true]
+    for ot_ in omega_true[1:]:
+        result = gyro_model(gyro_bias[-1], ot_)
+        gyro_sensor.append(result[0])
+        gyro_bias.append(result[1])
+
+    theta_noise = np.random.normal(0, scale=R, size=(len(q_i2b_true), 3))
+    q_noise = np.ones_like(q_i2b_true)
+    q_noise[:, :3] = theta_noise / 2
+
+    q_i2b_model = [(Quaternions(q_n_) * Quaternions(q_t_))() for q_n_, q_t_ in zip(q_noise, q_i2b_true)]
+    q_i2b_model = np.asarray(q_i2b_model)
+
+    fig_, axes = plt.subplots(1, 3)
+    axes[0].grid()
+    axes[0].plot(time_list, gyro_bias)
+    axes[1].grid()
+    axes[1].plot(time_list, gyro_sensor)
+    axes[2].grid()
+    axes[2].plot(time_list, q_i2b_model)
+
+    ekf_full_cal = MEKF_FULL(None, R * np.eye(3), Q=np.zeros(15), P=P)
+
+    ekf_full_cal.set_gyro_measure(gyro_sensor[0])
     ekf_full_cal.set_quat(q0, save=True)
 
-    historical = {'q_true': [q0], 'omega_true': [omega_true(0)]}
+    ref_vec = np.array([-1, 1, 1])
+
     ct = 0
-    while ct <= tend:
-        new_q_true = calc_quaternion(q0, omega_true(ct), dt)
+    for t_, omega_gyro_, q_true_, q_model_ in zip(time_list[1:], gyro_sensor[1:], q_i2b_true[1:], q_i2b_model[1:]):
         ekf_full_cal.propagate(dt)
+        body_vec = Quaternions(q_model_).frame_conv(ref_vec)
 
-        ekf_full_cal.inject_vector()
+        ekf_full_cal.inject_vector(body_vec, ref_vec, 0.01)
+        ekf_full_cal.reset_state()
+        ekf_full_cal.set_gyro_measure(omega_gyro_)
 
-        ct += dt
-
-        q0 = new_q_true
-        historical['q_true'].append(q0)
-        historical['omega_true'].append(omega_true(ct))
-
-
-
-
-
+    monitor = Monitor({**{'sim_time': time_list}, **ekf_full_cal.historical})
+    monitor.plot(x_dataset='sim_time', y_dataset='b')
+    monitor.plot(x_dataset='sim_time', y_dataset='q_est')
+    monitor.plot(x_dataset='sim_time', y_dataset='omega_est')
+    monitor.plot(x_dataset='sim_time', y_dataset='scale')
+    monitor.plot(x_dataset='sim_time', y_dataset='ku')
+    monitor.plot(x_dataset='sim_time', y_dataset='kl')
+    monitor.show_monitor()
