@@ -144,7 +144,7 @@ class MEKF_FULL(EKF):
     def update_state(self, new_x_k, z_k_medido, z_from_observer):
         error = z_k_medido - z_from_observer
         correction = self.kf_K @ error
-        if np.any(np.isnan(correction)):
+        if np.linalg.norm(correction) > 1e-3:
             print("correction: {}".format(correction))
         new_x = new_x_k + correction
         return new_x
@@ -158,8 +158,9 @@ class MEKF_FULL(EKF):
         # else:
         error_q = Quaternions(np.array([*self.internal_state[:3] * 0.5, 1]))
         error_q.normalize()
-        # diff = error_q * Quaternions(self.current_quaternion)
+        # current_quaternion = error_q * Quaternions(self.current_quaternion)
         current_quaternion = Quaternions(self.current_quaternion)*error_q
+
         current_quaternion.normalize()
         self.current_quaternion = current_quaternion()
         # bias error
@@ -203,7 +204,7 @@ if __name__ == '__main__':
 
     s_true *= 1e-6
 
-    bias_true = np.ones(3) * 0.1 * np.deg2rad(1) / 86400
+    bias_true = np.array([0.1, 0.1, 0.1]) * 1e-1
     sigma_bias = np.sqrt(10) * 1e-7
     sigma_omega = np.sqrt(10) * 1e-10
     sigma_scale = 0
@@ -221,7 +222,7 @@ if __name__ == '__main__':
     def get_omega_true(t_):  # deg/sec - rad/sec
         return np.array([np.sin(0.01 * t_),
                          np.sin(0.0085 * t_),
-                         np.cos(0.0085 * t_)]) * 0.1 * np.deg2rad(1)
+                         np.cos(0.0085 * t_)]) * 0.1
 
     def gyro_model(old_bias, omega_t_):
         new_bias = old_bias + sigma_bias * dt ** 0.5 * np.random.normal(0, 1, size=3)
