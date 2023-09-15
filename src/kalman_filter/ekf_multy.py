@@ -23,13 +23,14 @@ class MEKF(EKF):
         self.current_bias = np.zeros(3)
         self.sigma_omega = 0
         self.sigma_bias = 0
-        self.historical = {'q_est': [], 'b': [np.zeros(3)], 'mag_est': []}
+        self.historical = {'q_est': [], 'b': [np.zeros(3)], 'mag_est': [], 'omega_est': []}
 
     def add_reference_vector(self, vector):
         self.reference_vector = vector
 
     def set_gyro_measure(self, value):
         self.omega_state = value
+        self.historical['omega_est'].append(self.omega_state - self.current_bias)
 
     def set_quat(self, value, save=False):
         value = value / np.linalg.norm(value)
@@ -125,14 +126,14 @@ class MEKF(EKF):
 
     def reset_state(self):
         dot_error = self.internal_state[:3] @ self.internal_state[:3]
-        if dot_error < 1:
-            error_q = Quaternions(np.array([*self.internal_state[:3] * 0.5,
-                                            np.sqrt(1 - dot_error)]))
-        else:
-            error_q = Quaternions(np.array([*self.internal_state[:3] * 0.5, 1]) / np.sqrt(1 + dot_error))
+        # if dot_error < 1:
+        #     error_q = Quaternions(np.array([*self.internal_state[:3] * 0.5,
+        #                                     np.sqrt(1 - dot_error)]))
+        # else:
+        error_q = Quaternions(np.array([*self.internal_state[:3] * 0.5, 1]) / np.sqrt(1 + dot_error))
         error_q.normalize()
         # diff = error_q * Quaternions(self.current_quaternion)
-        current_quaternion = error_q * Quaternions(self.current_quaternion)
+        current_quaternion = Quaternions(self.current_quaternion) * error_q
         current_quaternion.normalize()
         self.current_quaternion = current_quaternion()
         self.current_bias += self.internal_state[3:]
