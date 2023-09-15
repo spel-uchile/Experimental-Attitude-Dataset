@@ -28,10 +28,11 @@ class MEKF_FULL(EKF):
         self.scale = np.zeros(3)
         self.k_l = np.zeros(3)
         self.k_u = np.zeros(3)
-        self.sigma2_elements = np.ones(5) * 100
+        self.sigma2_elements = np.array([np.sqrt(10) * 1e-10, np.sqrt(10) * 1e-7, 0, 0, 0])
 
         self.historical = {'q_est': [], 'b': [np.zeros(3)], 'mag_est': [], 'omega_est': [],
-                           'scale': [np.zeros(3)], 'ku': [np.zeros(3)], 'kl': [np.zeros(3)]}
+                           'scale': [np.zeros(3)], 'ku': [np.zeros(3)], 'kl': [np.zeros(3)],
+                           'p_cov': [self.covariance_P.flatten()]}
 
     def set_gyro_measure(self, value):
         self.omega_m = value
@@ -53,6 +54,24 @@ class MEKF_FULL(EKF):
         new_P_k = self.propagate_cov_P_sim(step, omega)
         return new_x_k, new_P_k
 
+    def propagate_P_rk4(self,  step, omega):
+        f_x = np.zeros((15, 15))
+        f_x[:3, :3] = -skew(omega)
+        f_x[:3, 3:6] = -(np.identity(3) - self.get_scale())
+        f_x[:3, 6:9] = -np.diag(self.omega_m - self.current_bias)
+        f_x[:3, 9:12] = -self.get_u()
+        f_x[:3, 12:] = -self.get_l()
+        g_x = np.eye(15)
+        g_x[:3, :3] = -np.eye(3) + self.get_scale()
+        q_ = np.eye(15) * np.kron(self.sigma2_elements, np.ones(3))
+
+        def get_dot_p(cov_p_):
+            dot_p = f_x @ cov_p_ + cov_p_ @ f_x.T + g_x @ q_ @ g_x.T
+            return dot_p
+
+        new_p = self.covariance_P + runge_kutta_4(get_dot_p, self.covariance_P, step)
+        return new_p
+
     def propagate_cov_P_sim(self, step, omega):
         f_x = np.zeros((15, 15))
         f_x[:3, :3] = -skew(omega)
@@ -62,14 +81,14 @@ class MEKF_FULL(EKF):
         f_x[:3, 12:] = -self.get_l()
 
         g_x = np.eye(15)
-        g_x[:3, :3] = -2 * np.eye(3) + self.get_scale()
+        g_x[:3, :3] = -np.eye(3) + self.get_scale()
 
         q_ = np.eye(15) * np.kron(self.sigma2_elements, np.ones(3))
 
         phi = (np.eye(15) + f_x + 0.5 * f_x @ f_x * step) * step
 
-        kf_q = g_x @ q_ @ g_x.T * step
-        new_p_k = phi.dot(self.covariance_P).dot(phi.T) # + kf_q
+        kf_q = phi @ g_x @ q_ @ g_x.T @ phi.T * step
+        new_p_k = phi @ self.covariance_P @ phi.T #+ kf_q
         return new_p_k
 
     def get_u(self):
@@ -99,42 +118,8 @@ class MEKF_FULL(EKF):
         s[2, 1] = self.k_l[2]
         return s
 
-    def propagate_cov_P(self, step, omega):
-        F_x = np.zeros((6, 6))
-        F_x[:3, :3] = self.get_discrete_theta(step, omega)
-        F_x[:3, 3:] = self.get_discrete_psi(step, omega)
-        F_x[3:, 3:] = np.identity(3)
-
-        self.kf_Q[:3, :3] = np.identity(3) * (self.sigma_v ** 2 * step + 1/3 * self.sigma_u ** 2 * step ** 3)
-        self.kf_Q[3:, :3] = - np.identity(3) * 0.5 * self.sigma_u ** 2 * step ** 2
-        self.kf_Q[:3, 3:] = - np.identity(3) * 0.5 * self.sigma_u ** 2 * step ** 2
-        self.kf_Q[3:, 3:] = np.identity(3) * self.sigma_u ** 2 * step
-        new_p_k = F_x @ self.covariance_P @ F_x.T + F_x @ self.kf_Q @ F_x.T
-        return new_p_k
-
-    def get_discrete_theta(self, dt, omega):
-        rot = np.linalg.norm(omega * dt)
-        mag = rot/dt
-        if rot != 0:
-            u_x = skewsymmetricmatrix(omega)
-            u_x2 = u_x @ u_x
-            theta = np.identity(3) - u_x * dt + 0.5 * u_x2 * dt**2
-        else:
-            theta = np.identity(3)
-        return theta
-
-    def get_discrete_psi(self, dt, omega):
-        rot = np.linalg.norm(omega * dt)
-        mag = rot / dt
-        if rot != 0:
-            omega_x = skewsymmetricmatrix(omega)
-            omega_x2 = omega_x @ omega_x
-            psi = - np.identity(3) * dt + 0.5 * omega_x * dt**2 - 1/6 * omega_x2 * dt**3
-        else:
-            psi = - np.identity(3) * dt
-        return psi
-
-    def attitude_discrete(self, current_quaternion, omega, step):
+    @staticmethod
+    def attitude_discrete(current_quaternion, omega, step):
         def q_dot(x):
             x_quaternion_i2b = x
             omega4 = omega4kinematics(omega)
@@ -171,10 +156,10 @@ class MEKF_FULL(EKF):
         #     error_q = Quaternions(np.array([*self.internal_state[:3] * 0.5,
         #                                     np.sqrt(1 - dot_error)]))
         # else:
-        error_q = Quaternions(np.array([*self.internal_state[:3] * 0.5, 1]) / np.sqrt(1 + dot_error))
+        error_q = Quaternions(np.array([*self.internal_state[:3] * 0.5, 1]))
         error_q.normalize()
         # diff = error_q * Quaternions(self.current_quaternion)
-        current_quaternion = error_q * Quaternions(self.current_quaternion)
+        current_quaternion = Quaternions(self.current_quaternion)*error_q
         current_quaternion.normalize()
         self.current_quaternion = current_quaternion()
         # bias error
@@ -194,6 +179,7 @@ class MEKF_FULL(EKF):
         self.historical['scale'].append(self.scale)
         self.historical['ku'].append(self.k_u)
         self.historical['kl'].append(self.k_l)
+        self.historical['p_cov'].append(self.covariance_P.flatten())
 
 
 if __name__ == '__main__':
@@ -218,8 +204,8 @@ if __name__ == '__main__':
     s_true *= 1e-6
 
     bias_true = np.ones(3) * 0.1 * np.deg2rad(1) / 86400
-    sigma_bias = np.sqrt(10) * 1e-10
-    sigma_omega = np.sqrt(10) * 1e-7
+    sigma_bias = np.sqrt(10) * 1e-7
+    sigma_omega = np.sqrt(10) * 1e-10
     sigma_scale = 0
     sigma_ku = 0
     sigma_kl = 0
@@ -244,7 +230,7 @@ if __name__ == '__main__':
                 new_bias)
 
 
-    P = np.ones((15, 15))
+    P = np.eye(15)
     P[:3, :3] = (6 / 3600) ** 2 * np.eye(3)
     P[3:6, 3:6] = (0.2 / 3600) ** 2 * np.eye(3)
     P[6:9, 6:9] = (0.002 / 3) ** 2 * np.eye(3)
@@ -296,13 +282,19 @@ if __name__ == '__main__':
     ekf_full_cal.set_quat(q0, save=True)
 
     ref_vec = np.array([-1, 1, 1])
+    real_body = np.array([Quaternions(q_model_).frame_conv(ref_vec) for q_model_ in q_i2b_true])
+    body_vec = np.array([Quaternions(q_model_).frame_conv(ref_vec) for q_model_ in q_i2b_model])
+
+    vec_std = np.std(real_body - body_vec, axis=0)
+
+    plt.figure()
+    plt.title("Body vector")
+    plt.plot(time_list, body_vec)
 
     ct = 0
-    for t_, omega_gyro_, q_true_, q_model_ in zip(time_list[1:], gyro_sensor[1:], q_i2b_true[1:], q_i2b_model[1:]):
+    for t_, omega_gyro_, q_true_, body_vec_ in zip(time_list[1:], gyro_sensor[1:], q_i2b_true[1:], body_vec[1:]):
         ekf_full_cal.propagate(dt)
-        body_vec = Quaternions(q_model_).frame_conv(ref_vec)
-
-        ekf_full_cal.inject_vector(body_vec, ref_vec, 0.01)
+        ekf_full_cal.inject_vector(body_vec_, ref_vec, R)
         ekf_full_cal.reset_state()
         ekf_full_cal.set_gyro_measure(omega_gyro_)
 
@@ -310,7 +302,8 @@ if __name__ == '__main__':
     monitor.plot(x_dataset='sim_time', y_dataset='b')
     monitor.plot(x_dataset='sim_time', y_dataset='q_est')
     monitor.plot(x_dataset='sim_time', y_dataset='omega_est')
-    monitor.plot(x_dataset='sim_time', y_dataset='scale')
-    monitor.plot(x_dataset='sim_time', y_dataset='ku')
-    monitor.plot(x_dataset='sim_time', y_dataset='kl')
+    monitor.plot(x_dataset='sim_time', y_dataset='scale', scale=1e6)
+    monitor.plot(x_dataset='sim_time', y_dataset='ku', scale=1e6)
+    monitor.plot(x_dataset='sim_time', y_dataset='kl', scale=1e6)
+    monitor.plot(x_dataset='sim_time', y_dataset='p_cov')
     monitor.show_monitor()

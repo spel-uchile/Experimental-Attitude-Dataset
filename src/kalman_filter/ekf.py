@@ -128,8 +128,11 @@ class EKF:
         return new_x
 
     def update_covariance_P_matrix(self, H, new_P_k):
+        # full solution to minimizing p+ = (I - KH) @ p- @ (I - KH).T + K @ R @ K.T,
+        # if K is optimized, then p+ = (I -KH) @ p-,
+        # but it is not recommended when numerical instabilities are presents
         I_nn = np.eye(len(self.state))
-        new_P = (I_nn - self.kf_K @ H) @ new_P_k @ (I_nn - self.kf_K @ H).T + self.kf_K @ self.kf_R @ self.kf_K.T
+        new_P = (I_nn - self.kf_K @ H) @ new_P_k  @ (I_nn - self.kf_K @ H).T + self.kf_K @ self.kf_R @ self.kf_K.T
         return new_P
 
     def attitude_observer_model(self, new_x, vector_i) -> np.array:

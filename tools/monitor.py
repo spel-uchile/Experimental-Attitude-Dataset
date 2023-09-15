@@ -37,7 +37,7 @@ class Monitor:
         self.vectors[name] = {'data': self.dataset[name],
                               'color': color}
 
-    def plot(self, x_dataset, y_dataset, xname=None, yname=None, title=None, step=False, scale=1, fft=False):
+    def plot(self, x_dataset, y_dataset, xname=None, yname=None, title=None, step=False, scale=1.0, fft=False):
         if fft:
             dataset = self.fft_dataset
         else:
@@ -49,7 +49,7 @@ class Monitor:
         plt.grid()
         if type(x_dataset) == str:
             x = dataset[x_dataset]
-            y = dataset[y_dataset]
+            y = np.array(dataset[y_dataset])
             if step and fft is False:
                 plt.step(x, y * scale, label=y_dataset)
             elif fft:
