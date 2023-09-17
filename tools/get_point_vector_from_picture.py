@@ -6,10 +6,12 @@ email: els.obrq@gmail.com
 
 from PIL import Image, ImageFilter
 from scipy import optimize, ndimage
+from scipy.optimize import fsolve
 from tools.clustering import cluster, decrease_color
 import numpy as np
 import cv2
 import os
+from tools.pso import PSOStandard
 import matplotlib.pyplot as plt
 
 re = 6378.137  # km
@@ -21,13 +23,65 @@ rs = au
 sensor_width = 2.74 * 1e-3  # m
 flength = 0.00304
 
+MAX_NUM_LINES = 3
 
-def get_lines(img_):
+
+def intersection(line1, line2):
+    """Finds the intersection of two lines given in Hesse normal form.
+
+    Returns closest integer pixel locations.
+    See https://stackoverflow.com/a/383527/5087436
+    """
+    rho1, theta1 = line1[0]
+    rho2, theta2 = line2[0]
+    A = np.array([
+        [np.cos(theta1), np.sin(theta1)],
+        [np.cos(theta2), np.sin(theta2)]
+    ])
+    b = np.array([[rho1], [rho2]])
+
+    def func(x):
+        return (A @ x - b.T)[0]
+
+    xsol, info, status, msg = fsolve(func, x0=np.zeros(2), full_output=1)
+    # x0, y0 = np.linalg.solve(A, b)
+    if status == 1:
+        x0, y0 = int(np.round(xsol[0])), int(np.round(xsol[1]))
+        return [[x0, y0]]
+    else:
+        return None
+
+
+def get_lines(img_, center_guess):
     img_cv2 = cv2.cvtColor(np.asarray(img_), cv2.COLOR_RGB2BGR)
     gray = img_.convert('L')
     # Apply edge detection method on the image
-    edges = cv2.Canny(np.asarray(gray, dtype=np.uint8), 25, 40, apertureSize=3)
-    lines = cv2.HoughLines(edges, 1, 0.01, 55)
+    gray = (np.asarray(gray) / 255) ** 0.7 * 255
+    gray = np.asarray(gray, dtype=np.uint8)
+    kernel = np.ones((3, 3), np.uint8)
+    img_dilation = cv2.dilate(np.asarray(gray, dtype=np.uint8), kernel, iterations=1)
+    edges = cv2.Canny(gray, 25, 28, apertureSize=3)
+
+    lines = cv2.HoughLines(edges, 2, 0.1, 35)
+    count = 0
+    max_count = 100
+    ths_val = 50
+    center_point = None
+    lines_list = []
+    thr_list = []
+    if lines is not None:
+        while len(lines) != MAX_NUM_LINES:
+            if len(lines) > MAX_NUM_LINES:
+                ths_val += 1
+            else:
+                ths_val -= 1
+            lines = cv2.HoughLines(edges, 1, 0.1, ths_val)
+            count += 1
+            if count > max_count or lines is None:
+                print(ths_val, len(lines)) if lines is not None else None
+
+                break
+
     # Draw the lines
     if lines is not None:
         for i in range(0, len(lines)):
@@ -47,7 +101,7 @@ def rgb_to_gray(R, G, B):
     return int(R * 299 / 1000 + G * 587 / 1000 + B * 114 / 1000)
 
 
-def get_body(col):
+def get_body(col, show=True):
     fig, ax = plt.subplots(1, 7, figsize=(15, 5))
     fig.suptitle('Test')
     fig.tight_layout()
@@ -55,7 +109,7 @@ def get_body(col):
     ax[0].set_title("Original")
 
     new_data = []
-    new_col, lighter_colors, counts = decrease_color(col, 10)
+    new_col, lighter_colors, counts = decrease_color(col, 5)
     color_label = []
     ax[1].imshow(new_col / 255)
     ax[1].set_title("KMeans")
@@ -119,7 +173,7 @@ def get_body(col):
         bw_temp.append(bw)
         ax[5].imshow(bw)
         ax[5].set_title("Body")
-    plt.show()
+    plt.show() if show else None
     return bw_temp
 
 
@@ -184,7 +238,7 @@ def get_type_radius(im_list):
     return radius_list, point_list
 
 
-def calc_hyperbola(points, fl, pw, h, length):
+def calc_hyperbola(points, fl, pw, ph, h, shape_):
     edge_array = np.array([points[0], points[1]]).T
     delta_ = 2
     lines = []
@@ -194,8 +248,8 @@ def calc_hyperbola(points, fl, pw, h, length):
             break
     points_center = edge_array[:-delta_] + np.array(lines) * 0.5
     # p_c[x, y, z]
-    cx = length * 0.5 * pw
-    cy = length * 0.5 * pw
+    cx = shape_[0] * 0.5 * pw
+    cy = shape_[1] * 0.5 * ph
     p_c = [np.array([(points_center[i])[1] * pw - cx, (points_center[i][0]) * pw - cy, fl]) for i in
            range(len(points_center))]
     hh = np.array(p_c)
@@ -204,11 +258,15 @@ def calc_hyperbola(points, fl, pw, h, length):
     y = np.cos(alpha) * np.array([np.linalg.norm(p_c_i) for p_c_i in p_c])
     e_c = np.linalg.inv(hh.T.dot(hh)).dot(hh.T).dot(y)
     e_c /= np.linalg.norm(e_c)
-    center_pixel = np.asarray((e_c * fl / e_c[2])[:2] / pw + length * 0.5, dtype=np.uint8)
+
+    center_pixel = np.zeros(2, dtype=np.int16)
+    vec_pix = (e_c * fl / e_c[2])[:2]
+    center_pixel[0] = np.int16(vec_pix[0] / pw + shape_[0] * 0.5)
+    center_pixel[1] = np.int16(vec_pix[1] / ph + shape_[1] * 0.5)
     return edge_array, points_center, e_c, center_pixel
 
 
-def calc_sun_curvature(points, fl, pw, length, h):
+def calc_sun_curvature(points, fl, pw, ph, shape_, h):
     edge_array = np.array([points[0], points[1]]).T
     delta_ = 5
     lines = []
@@ -218,9 +276,9 @@ def calc_sun_curvature(points, fl, pw, length, h):
             break
     points_center = edge_array[:-delta_] + np.array(lines) * 0.5
     # p_c[x, y, z]
-    cx = length * 0.5 * pw
-    cy = length * 0.5 * pw
-    p_c = [np.array([(points_center[i])[1] * pw - cx, (points_center[i][0]) * pw - cy, fl]) for i in
+    cx = shape_[0] * 0.5 * pw
+    cy = shape_[1] * 0.5 * ph
+    p_c = [np.array([(points_center[i])[1] * pw - cx, (points_center[i][0]) * ph - cy, fl]) for i in
            range(len(points_center))]
     hh = np.array(p_c)
     alpha = np.arcsin(rs / (rs + h))
@@ -228,35 +286,42 @@ def calc_sun_curvature(points, fl, pw, length, h):
     sun_c = np.linalg.inv(hh.T.dot(hh)).dot(hh.T).dot(y)
     sun_c /= np.linalg.norm(sun_c)
 
-    center_pixel = np.asarray((sun_c * fl / sun_c[2])[:2] / pw + length * 0.5, dtype=np.int)
+    center_pixel = np.zeros(2, dtype=np.int16)
+    vec_pix = (sun_c * fl / sun_c[2])[:2]
+    center_pixel[0] = np.int16(vec_pix[0] / pw + shape_[0] * 0.5)
+    center_pixel[1] = np.int16(vec_pix[1] / ph + shape_[1] * 0.5)
     return edge_array, points_center, sun_c, center_pixel
-
 
 
 def get_vector(file_name, height):
     col = Image.open(file_name)
-    bw_bodies = get_body(col)
+    pixel_size_width = sensor_width / col.size[0]
+    pixel_size_height = sensor_width / col.size[1]
+    bw_bodies = get_body(col.copy(), show=False)
     radius_, point_list_ = get_type_radius(bw_bodies)
-    print("RADIUS: ", radius_)
+
+    img_cv2_ = cv2.cvtColor(np.asarray(col), cv2.COLOR_RGB2BGR)
+    edge_ = None
     for body_, radii, pl in zip(bw_bodies, radius_, point_list_):
         if 10 < radii[0] < 150:
             "sun"
-            pixel_size = sensor_width / np.shape(body_)[0]
             sun_edge_array, sun_points_center, sun_c, center_pixel = calc_sun_curvature(pl,
                                                                                         flength,
-                                                                                        pixel_size,
-                                                                                        np.shape(body_)[0],
+                                                                                        pixel_size_width,
+                                                                                        pixel_size_height,
+                                                                                        [col.size[0], col.size[1]],
                                                                                         height)
-            edge_, img_cv2_ = get_lines(col)
+            edge_, img_cv2_ = get_lines(col, center_pixel)
         elif radii[0] > 150:
             "earth"
             pixel_size = sensor_width / np.shape(body_)[0]
             # Earth: Recalculate with hyperbolic geometry
             earth_edge_array, earth_points_center, earth_c, center_pixel = calc_hyperbola(pl,
                                                                                           flength,
-                                                                                          pixel_size,
+                                                                                          pixel_size_width,
+                                                                                          pixel_size_height,
                                                                                           height,
-                                                                                          np.shape(body_)[0])
+                                                                                          [col.size[0], col.size[1]],)
     return edge_, img_cv2_
 
 
@@ -274,9 +339,13 @@ if __name__ == '__main__':
     datalist.sort_values(by='id', inplace=True)
     height_sc = 480 #  km
     for filename in datalist['filename'].values:
-        edge_, img_cv2_ = get_vector(PROJECT_FOLDER + filename, height_sc)
+        # edge_, img_cv2_ = get_vector(PROJECT_FOLDER + filename, height_sc)
+        col = Image.open(PROJECT_FOLDER + filename)
+        edge_, img_cv2_ = get_lines(col, None)
         # plt.figure()
         # plt.imshow(img_cv2_)
+        # plt.figure()
+        # plt.imshow(edge_)
         # plt.show()
         video_salida.write(img_cv2_)
 

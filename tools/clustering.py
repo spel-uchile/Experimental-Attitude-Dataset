@@ -12,8 +12,7 @@ import scipy
 import os
 from PIL import Image
 import binascii
-# plt.style.use('Solarize_Light2')
-plt.style.use('seaborn-dark')
+
 # Bajo 50, 50, 50 es negro
 
 
