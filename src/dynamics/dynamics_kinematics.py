@@ -5,7 +5,7 @@ email: els.obrq@gmail.com
 """
 from sgp4.api import Satrec
 from sgp4.api import WGS84
-from tools.tools import *
+from tools.mathtools import *
 import numpy as np
 
 RAD2DEG = 180 / np.pi

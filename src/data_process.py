@@ -6,7 +6,7 @@ email: els.obrq@gmail.com
 import matplotlib.pyplot as plt
 from scipy.cluster.hierarchy import dendrogram
 from sklearn.cluster import AgglomerativeClustering
-from tools.tools import *
+from tools.mathtools import *
 from tools.two_step_mag_calibration import two_step
 import pandas as pd
 import numpy as np

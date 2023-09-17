@@ -8,7 +8,7 @@ import numpy as np
 
 from src.dynamics.Quaternion import Quaternions
 from sklearn.metrics import mean_squared_error
-from tools.tools import *
+from tools.mathtools import *
 from src.kalman_filter.ekf import EKF
 
 

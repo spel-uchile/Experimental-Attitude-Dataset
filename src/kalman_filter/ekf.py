@@ -7,7 +7,7 @@ import numpy as np
 
 from ..dynamics.Quaternion import Quaternions
 from sklearn.metrics import mean_squared_error
-from tools.tools import *
+from tools.mathtools import *
 
 
 rev_day = 15.23166528

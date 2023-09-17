@@ -6,7 +6,7 @@ email: els.obrq@gmail.com
 
 from ..dynamics.Quaternion import Quaternions
 from sklearn.metrics import mean_squared_error
-from tools.tools import *
+from tools.mathtools import *
 from .ekf import EKF
 
 

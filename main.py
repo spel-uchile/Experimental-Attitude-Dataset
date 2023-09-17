@@ -32,11 +32,16 @@ TIME_FORMAT = "%Y/%m/%d %H:%M:%S"
 
 ONLINE_MAG_CALIBRATION = False
 CREATE_FRAME = False
+GET_VECTOR_FROM_PICTURE = True
 EKF_SETUP = 'NORMAL'
+
 
 if __name__ == '__main__':
     if CREATE_FRAME:
         save_frame(PROJECT_FOLDER, VIDEO_DATA)
+
+    if GET_VECTOR_FROM_PICTURE:
+        pass
     # create data with datetime, and near tle
     sensors = RealData(PROJECT_FOLDER, OBC_DATA)
     sensors.create_datetime_from_timestamp(TIME_FORMAT)
@@ -115,7 +120,7 @@ if __name__ == '__main__':
         P = np.diag([0.5, 0.5, 0.5, 0.01, 0.01, 0.01])
         ekf_model = MEKF(inertia, P=P, Q=np.zeros((6, 6)), R=np.zeros((3, 3)))
         ekf_model.sigma_bias = 0.0005
-        ekf_model.sigma_omega = 0.05
+        ekf_model.sigma_omega = 0.005
     elif EKF_SETUP == 'FULL':
         # MEKF
         P = np.diag([0.5, 0.5, 0.5, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01])
@@ -140,7 +145,7 @@ if __name__ == '__main__':
         q_i2b = calc_quaternion(q_i2b, omega_b_model, dt)
         omega_b_model = calc_omega_b(omega_b_model, dt)
 
-        ekf_model.inject_vector(body_vec_, mag_ref_, sigma2=0.01)
+        ekf_model.inject_vector(body_vec_, mag_ref_, sigma2=0.001)
         ekf_model.historical['sun_b_est'].append(Quaternions(q_i2b).frame_conv(sun_sc_i_))
         ekf_model.reset_state()
         ekf_model.set_gyro_measure(omega_gyro_)
@@ -170,6 +175,7 @@ if __name__ == '__main__':
     monitor.plot(x_dataset='full_time', y_dataset='omega_est')
     monitor.plot(x_dataset='full_time', y_dataset='mag_est')
     monitor.plot(x_dataset='full_time', y_dataset='sun_b_est')
+    monitor.plot(x_dataset='full_time', y_dataset='p_cov')
     if EKF_SETUP == 'FULL':
         monitor.plot(x_dataset='full_time', y_dataset='scale')
         monitor.plot(x_dataset='full_time', y_dataset='ku')

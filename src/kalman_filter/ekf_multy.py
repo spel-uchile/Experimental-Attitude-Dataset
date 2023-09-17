@@ -5,7 +5,7 @@ email: els.obrq@gmail.com
 """
 from ..dynamics.Quaternion import Quaternions
 from sklearn.metrics import mean_squared_error
-from tools.tools import *
+from tools.mathtools import *
 from .ekf import EKF
 
 
@@ -23,7 +23,8 @@ class MEKF(EKF):
         self.current_bias = np.zeros(3)
         self.sigma_omega = 0
         self.sigma_bias = 0
-        self.historical = {'q_est': [], 'b': [np.zeros(3)], 'mag_est': [], 'omega_est': []}
+        self.historical = {'q_est': [], 'b': [np.zeros(3)], 'mag_est': [], 'omega_est': [],
+                           'p_cov': [self.covariance_P.flatten()]}
 
     def add_reference_vector(self, vector):
         self.reference_vector = vector
@@ -142,6 +143,8 @@ class MEKF(EKF):
         self.internal_state = np.zeros(6)
         self.historical['q_est'].append(self.current_quaternion)
         self.historical['b'].append(self.current_bias)
+        self.historical['p_cov'].append(self.covariance_P.flatten())
+        print(self.current_bias)
 
 
 if __name__ == '__main__':
