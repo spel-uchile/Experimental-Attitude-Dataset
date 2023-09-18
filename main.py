@@ -30,7 +30,7 @@ WINDOW_TIME = {'Start': '2023/08/24 10:44:09',
                'FLAG': True}
 TIME_FORMAT = "%Y/%m/%d %H:%M:%S"
 
-ONLINE_MAG_CALIBRATION = False
+ONLINE_MAG_CALIBRATION = True
 CREATE_FRAME = False
 GET_VECTOR_FROM_PICTURE = True
 EKF_SETUP = 'NORMAL'
@@ -80,10 +80,11 @@ if __name__ == '__main__':
         # sensors.calibrate_mag(mag_i=mag_i)
         sensors.calibrate_mag(by_file=True)
     else:
+        # sensors.calibrate_mag(by_file=True)
         sensors.calibrate_mag(by_file=True)
         ekf_mag_cal = MagEKF()
         for mag_i_, mag_b_ in zip(mag_i, sensors.data[['mag_x', 'mag_y', 'mag_z']].values):
-            ekf_mag_cal.update_state(mag_b_, mag_i_)
+            ekf_mag_cal.update_state(mag_b_, mag_i_, R=0.1)
             bias_, D_scale = ekf_mag_cal.get_calibration()
             new_sensor.append((np.eye(3) + D_scale) @ mag_b_ - bias_)
         ekf_mag_cal.plot(new_sensor)
