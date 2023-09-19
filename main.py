@@ -30,7 +30,7 @@ WINDOW_TIME = {'Start': '2023/08/24 10:44:09',
                'FLAG': True}
 TIME_FORMAT = "%Y/%m/%d %H:%M:%S"
 
-ONLINE_MAG_CALIBRATION = True
+ONLINE_MAG_CALIBRATION = False
 CREATE_FRAME = False
 GET_VECTOR_FROM_PICTURE = True
 EKF_SETUP = 'NORMAL'
@@ -84,10 +84,10 @@ if __name__ == '__main__':
         sensors.calibrate_mag(by_file=True)
         ekf_mag_cal = MagEKF()
         for mag_i_, mag_b_ in zip(mag_i, sensors.data[['mag_x', 'mag_y', 'mag_z']].values):
-            ekf_mag_cal.update_state(mag_b_, mag_i_, R=0.1)
+            ekf_mag_cal.update_state(mag_b_, mag_i_, cov_sensor_=0.0001)
             bias_, D_scale = ekf_mag_cal.get_calibration()
             new_sensor.append((np.eye(3) + D_scale) @ mag_b_ - bias_)
-        ekf_mag_cal.plot(new_sensor)
+        ekf_mag_cal.plot(np.asarray(new_sensor) - mag_i)
 
     # plot
     sensors.plot_key(['mag_x', 'mag_y', 'mag_z'])
@@ -114,20 +114,22 @@ if __name__ == '__main__':
                 'mag_ned': mag_ned,
                 'mag_b': [mag_b],
                 'sun_i': sun_pos,
+                'sun_i_sc': sun_sc_i,
                 'sideral': sideral}
 
     if EKF_SETUP == 'NORMAL':
         # MEKF
-        P = np.diag([0.5, 0.5, 0.5, 0.01, 0.01, 0.01])
+        P = np.diag([0.5, 0.5, 0.5, 0.1, 0.1, 0.01])
         ekf_model = MEKF(inertia, P=P, Q=np.zeros((6, 6)), R=np.zeros((3, 3)))
         ekf_model.sigma_bias = 0.0005
         ekf_model.sigma_omega = 0.005
+        ekf_model.current_bias = np.array([0.03711, 0.0079, 0])
     elif EKF_SETUP == 'FULL':
         # MEKF
-        P = np.diag([0.5, 0.5, 0.5, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01])
+        P = np.diag([0.5, 0.5, 0.5, 0.001, 0.001, 0.001, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01])
         ekf_model = MEKF_FULL(inertia, P=P, Q=np.zeros((15, 15)), R=np.zeros((3, 3)))
-        ekf_model.sigma_bias = 0.005
-        ekf_model.sigma_omega = 0.005
+        ekf_model.sigma_bias = 0.0005
+        ekf_model.sigma_omega = 0.0005
 
     ekf_model.set_quat(q_i2b, save=True)
     ekf_model.get_observer_prediction(None, mag_i[0])
@@ -147,14 +149,14 @@ if __name__ == '__main__':
         omega_b_model = calc_omega_b(omega_b_model, dt)
 
         ekf_model.inject_vector(body_vec_, mag_ref_, sigma2=0.001)
-        ekf_model.historical['sun_b_est'].append(Quaternions(q_i2b).frame_conv(sun_sc_i_))
+        ekf_model.historical['sun_b_est'].append(Quaternions(ekf_model.current_quaternion).frame_conv(sun_sc_i_))
         ekf_model.reset_state()
+        omega_gyro_[2] = 0.0
         ekf_model.set_gyro_measure(omega_gyro_)
 
         # save data
         channels['q_i2b'].append(q_i2b)
         channels['omega_b'].append(omega_b_model)
-        print(t_)
 
     channels = {**channels, **ekf_model.historical}
     monitor = Monitor(channels)
@@ -166,12 +168,12 @@ if __name__ == '__main__':
 
     monitor.plot(x_dataset='full_time', y_dataset='mag_i')
     # monitor.plot(x_dataset='full_time', y_dataset='lonlat')
-    # monitor.plot(x_dataset='full_time', y_dataset='sun_i')
+    monitor.plot(x_dataset='full_time', y_dataset='sun_i_sc')
     # monitor.plot(x_dataset='full_time', y_dataset='sat_pos_i')
     monitor.plot(x_dataset='full_time', y_dataset='q_i2b')
     monitor.plot(x_dataset='full_time', y_dataset='omega_b')
     # ekf
-    monitor.plot(x_dataset='full_time', y_dataset='b')
+    monitor.plot(x_dataset='full_time', y_dataset='b_est')
     monitor.plot(x_dataset='full_time', y_dataset='q_est')
     monitor.plot(x_dataset='full_time', y_dataset='omega_est')
     monitor.plot(x_dataset='full_time', y_dataset='mag_est')

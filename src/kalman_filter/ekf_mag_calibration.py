@@ -14,17 +14,17 @@ class MagEKF():
         self.x_est = np.zeros(9)
         b_est_ = np.zeros(3)
         d_est_ = np.zeros(6)
-
-        b_est_std = np.ones(3) * 100
-        d_est_std = np.ones(6) * 10
         self.x_est = np.array([*b_est_, *d_est_])
+
+        b_est_std = np.ones(3) * 1
+        d_est_std = np.ones(6) * 1e-2
         self.pCov = np.diag([*b_est_std, *d_est_std])  # (uT)^2
         self.historical = {'bias': [], 'scale': [], 'error': [], 'P': []}
 
-    def update_state(self, mag_measure, mag_reference, R):
+    def update_state(self, mag_measure, mag_reference, cov_sensor_):
         self.historical['bias'].append(self.x_est[:3])
         self.historical['scale'].append(self.x_est[3:])
-        self.historical['P'].append(self.pCov.flatten())
+        self.historical['P'].append(np.diag(self.pCov))
         current_x = self.x_est
         p_k = self.pCov
 
@@ -34,10 +34,11 @@ class MagEKF():
         self.historical['error'].append(error_)
         print("Error: ", error_)
         jH = self.sensitivity_matrix_H(current_x, mag_measure)
-        sigma_2_ = self.sigma_2(current_x, R, mag_measure)
+        sigma_2_ = self.sigma_2(current_x, cov_sensor_, mag_measure)
+        print(sigma_2_)
         kGain = self.update_error_K(p_k, jH, sigma_2_)
         self.x_est = self.update_error_x(current_x, kGain, error_, jH)
-        self.pCov = self.update_error_P(p_k, jH, kGain, sigma_2_)
+        self.pCov = self.update_error_P(p_k, jH, kGain)
 
     def get_calibration(self):
         bias_ = self.x_est[:3]
@@ -99,7 +100,7 @@ class MagEKF():
         m_ed[4, 0] = D_[0, 2]
         m_ed[4, 2] = D_[0, 2]
         m_ed[4, 3] = D_[1, 2]
-        m_ed[4, 5] = D_[0, 1]
+        m_ed[4, 5] = D_[0, 2]
 
         m_ed[5, 1] = D_[1, 2]
         m_ed[5, 2] = D_[1, 2]
@@ -156,9 +157,9 @@ class MagEKF():
         return x_k
 
     @staticmethod
-    def update_error_P(p_k_, h_k_, k_k_, k_sigma2):
+    def update_error_P(p_k_, h_k_, k_k_):
         I_nn = np.eye(9)
-        new_P = (I_nn - np.multiply(k_k_.reshape(-1, 1), h_k_)) @ p_k_ # @ (I_nn - np.multiply(k_k_.reshape(-1, 1), h_k_)).T
+        new_P = (I_nn - np.multiply(k_k_.reshape(-1, 1), h_k_)) @ p_k_
         return  new_P
 
     @staticmethod
@@ -180,7 +181,6 @@ class MagEKF():
                       B_k[0] * b_est_[2] + B_k[2] * b_est_[0],
                       B_k[1] * b_est_[2] + B_k[2] * b_est_[1]])
         H_k[3:] = -self.S_k(B_k) @ self.M_ed(d_c) + 2 * J
-        print(np.linalg.norm(H_k))
         return H_k
 
 
@@ -204,11 +204,12 @@ if __name__ == '__main__':
     import scipy.io
     import matplotlib.pyplot as plt
 
-    b_est = np.array([1, 1, 1]) * 0.01
-    D_est = np.ones(6) * 1e-12
-    P_est = np.diag([*b_est, *D_est])  # (uT)^2
+    b_est = np.array([1, 1, 1]) * 1e-3
+    D_est = np.ones(6) * 1e-4
+    D_est[3:] *= 1e-5
+    P_est = np.diag([*b_est, *D_est]) * 10 # (uT)^2
 
-    std_measure = 0.1  # uT
+    std_measure = 0.01  # uT
     step = 10  # s
     tend = 28801
     time = np.arange(0, tend, step)
@@ -216,10 +217,11 @@ if __name__ == '__main__':
     trmm_data = scipy.io.loadmat('../../tools/trmm_data.mat')
     mag_true = trmm_data['mag_i'] / 10
 
-    b_true = np.array([-10, 50, .50])
-    D_true = np.array([[0.005, 0.0005, 0.0005], [0.0005, 0.0015, 0.0005], [0.0005, 0.0005, 0.005]])
+    b_true = np.array([-10, 20, .50])
+    D_true = np.array([[0.5, 0.01, 0.01], [0.01, 0.5, 0.01], [0.01, 0.01, 0.5]])
 
-    mag_sensor = [np.linalg.inv(np.eye(3) + D_true) @ (mag_true_ + np.random.normal(0, std_measure) + b_true) for mag_true_ in mag_true]
+    mag_sensor = [np.linalg.inv(np.eye(3) + D_true) @ (mag_true_ + np.random.normal(0, std_measure) + b_true)
+                  for mag_true_ in mag_true]
     mag_sensor = np.array(mag_sensor)
 
     plt.figure()
@@ -238,9 +240,10 @@ if __name__ == '__main__':
     ekf_cal = MagEKF()
     ekf_cal.pCov = P_est
     new_sensor = []
+    cov_sensor = std_measure ** 2
     for k in range(len(time)):
         # update state
-        ekf_cal.update_state(mag_sensor[k], mag_true[k], 0.0001)
+        ekf_cal.update_state(mag_sensor[k], mag_true[k], cov_sensor)
         bias_, D_scale = ekf_cal.get_calibration()
         new_sensor.append((np.eye(3) + D_scale) @ (mag_sensor[k] - bias_))
         print(mag_true[k], new_sensor[-1])

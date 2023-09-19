@@ -159,7 +159,7 @@ class MEKF_FULL(EKF):
         error_q = Quaternions(np.array([*self.internal_state[:3] * 0.5, 1]))
         error_q.normalize()
         # current_quaternion = error_q * Quaternions(self.current_quaternion)
-        current_quaternion = Quaternions(self.current_quaternion)*error_q
+        current_quaternion = Quaternions(self.current_quaternion) * error_q
 
         current_quaternion.normalize()
         self.current_quaternion = current_quaternion()
@@ -204,7 +204,7 @@ if __name__ == '__main__':
 
     s_true *= 1e-6
 
-    bias_true = np.array([0.1, 0.1, 0.1]) * 1e-1
+    bias_true = np.array([0.1, 0.1, 0.1])
     sigma_bias = np.sqrt(10) * 1e-7
     sigma_omega = np.sqrt(10) * 1e-10
     sigma_scale = 0

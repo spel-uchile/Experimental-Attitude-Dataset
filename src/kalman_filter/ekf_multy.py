@@ -23,7 +23,7 @@ class MEKF(EKF):
         self.current_bias = np.zeros(3)
         self.sigma_omega = 0
         self.sigma_bias = 0
-        self.historical = {'q_est': [], 'b': [np.zeros(3)], 'mag_est': [], 'omega_est': [],
+        self.historical = {'q_est': [], 'b_est': [np.zeros(3)], 'mag_est': [], 'omega_est': [],
                            'p_cov': [self.covariance_P.flatten()]}
 
     def add_reference_vector(self, vector):
@@ -31,6 +31,7 @@ class MEKF(EKF):
 
     def set_gyro_measure(self, value):
         self.omega_state = value
+        print(self.omega_state - self.current_bias)
         self.historical['omega_est'].append(self.omega_state - self.current_bias)
 
     def set_quat(self, value, save=False):
@@ -142,9 +143,8 @@ class MEKF(EKF):
         self.state = np.zeros(6)
         self.internal_state = np.zeros(6)
         self.historical['q_est'].append(self.current_quaternion)
-        self.historical['b'].append(self.current_bias)
+        self.historical['b_est'].append(self.current_bias)
         self.historical['p_cov'].append(self.covariance_P.flatten())
-        print(self.current_bias)
 
 
 if __name__ == '__main__':
