@@ -163,6 +163,7 @@ if __name__ == '__main__':
     monitor.set_position('sat_pos_i')
     monitor.set_quaternion('q_est')
     monitor.set_sideral('sideral')
+
     monitor.add_vector('sun_i', color='yellow')
     monitor.add_vector('mag_i', color='red')
 
@@ -183,5 +184,5 @@ if __name__ == '__main__':
         monitor.plot(x_dataset='full_time', y_dataset='scale')
         monitor.plot(x_dataset='full_time', y_dataset='ku')
         monitor.plot(x_dataset='full_time', y_dataset='kl')
-    monitor.show_monitor()
+    # monitor.show_monitor()
     monitor.plot3d()

@@ -3,12 +3,12 @@ Created by Elias Obreque
 els.obrq@gmail.com
 Date: 04-12-2022
 """
+import time
+
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 import pyvista as pv
 from pyquaternion import Quaternion as pyquat
-from pyvista import examples
 import pyvista
 
 
@@ -101,6 +101,11 @@ class Monitor3d:
                   pv.Arrow(np.zeros(3), direction=np.array([0, 0, 1]), scale=1)]
     plotter3d = pv.Plotter()
     vectors = {}
+    body_x_i = None
+    body_y_i = None
+    body_z_i = None
+    flag = False
+    view_worker = None
 
     def __init__(self, position, q_i2b, sideral):
         self.last_index_ = 0
@@ -122,6 +127,7 @@ class Monitor3d:
                                   point_size=3, color='black')
         self.plotter3d.add_axes()
         self.add_eci_frame()
+        self.add_body_frame()
 
         # reset earth
         self.earth3d.rotate_z(180, inplace=True)
@@ -131,8 +137,11 @@ class Monitor3d:
         self.plotter3d.add_slider_widget(self.update, [0, len(self.sat_pos) - 1], value=0, title='Step')
         # self.btn = self.plotter3d.add_checkbox_button_widget(self.forward, value=True)
 
-    def forward(self, flag):
-        self.update(np.min([self.last_index_ + 1, len(self.sat_pos) - 1]))
+    def update_windows(self):
+        while self.flag and self.last_index_ < len(self.sat_pos) - 1:
+            self.update(self.last_index_)
+            time.sleep(1)
+            self.last_index_ += 1
 
     def add_vectors(self, vectors_list):
         for key, item in vectors_list.items():
@@ -149,6 +158,15 @@ class Monitor3d:
                                                   scale=200)
             self.plotter3d.add_mesh(self.vectors[key]['model'], color=color, reset_camera=False)
 
+    def add_body_frame(self):
+        center_ref = np.zeros(3)
+        self.body_x_i = pv.Arrow(center_ref, [1, 0, 0], scale=200)
+        self.body_y_i = pv.Arrow(center_ref, [0, 1, 0], scale=200)
+        self.body_z_i = pv.Arrow(center_ref, [0, 0, 1], scale=200)
+        self.plotter3d.add_mesh(self.body_x_i, color='red', lighting=False)
+        self.plotter3d.add_mesh(self.body_y_i, color='green', lighting=False)
+        self.plotter3d.add_mesh(self.body_z_i, color='blue', lighting=False)
+
     def update(self, index_):
         index_ = int(index_)
         # position
@@ -162,6 +180,19 @@ class Monitor3d:
         self.sat_model.rotate_vector(vector=tuple(d_quaternion.vector),
                                      angle=d_quaternion.angle * np.rad2deg(1),
                                      point=sc_pos_i, inplace=True)
+        self.body_x_i.translate(relative_pos, inplace=True)
+        self.body_y_i.translate(relative_pos, inplace=True)
+        self.body_z_i.translate(relative_pos, inplace=True)
+        self.body_x_i.rotate_vector(vector=tuple(d_quaternion.vector),
+                                    angle=d_quaternion.angle * np.rad2deg(1),
+                                    point=sc_pos_i, inplace=True)
+        self.body_y_i.rotate_vector(vector=tuple(d_quaternion.vector),
+                                    angle=d_quaternion.angle * np.rad2deg(1),
+                                    point=sc_pos_i, inplace=True)
+        self.body_z_i.rotate_vector(vector=tuple(d_quaternion.vector),
+                                    angle=d_quaternion.angle * np.rad2deg(1),
+                                    point=sc_pos_i, inplace=True)
+
         # earth
         sideral = self.earth_sideral[index_]
         self.earth3d.rotate_z((sideral - self.last_sideral) * np.rad2deg(1), inplace=True)
