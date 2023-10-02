@@ -184,5 +184,5 @@ if __name__ == '__main__':
         monitor.plot(x_dataset='full_time', y_dataset='scale')
         monitor.plot(x_dataset='full_time', y_dataset='ku')
         monitor.plot(x_dataset='full_time', y_dataset='kl')
-    # monitor.show_monitor()
+    monitor.show_monitor()
     monitor.plot3d()

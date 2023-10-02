@@ -339,9 +339,9 @@ if __name__ == '__main__':
     datalist.sort_values(by='id', inplace=True)
     height_sc = 480 #  km
     for filename in datalist['filename'].values:
-        # edge_, img_cv2_ = get_vector(PROJECT_FOLDER + filename, height_sc)
-        col = Image.open(PROJECT_FOLDER + filename)
-        edge_, img_cv2_ = get_lines(col, None)
+        # col = Image.open(PROJECT_FOLDER + filename)
+        # edge_, img_cv2_ = get_lines(col, None)
+        edge_, img_cv2_ = get_vector(PROJECT_FOLDER + filename, height_sc)
         # plt.figure()
         # plt.imshow(img_cv2_)
         # plt.figure()
