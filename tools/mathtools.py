@@ -56,10 +56,10 @@ def fmod2(x):
 
 def julian_to_datetime(julian_date):
     base_date = datetime.datetime(2000, 1, 1)  # Julian date 2451545 corresponds to this datetime
-    days_elapsed = julian_date - 2451545
+    days_elapsed = julian_date - 2451544.5
     delta = datetime.timedelta(days=days_elapsed)
     converted_datetime = base_date + delta
-    return converted_datetime
+    return converted_datetime.replace(tzinfo=datetime.timezone.utc)
 
 
 def jd_to_decyear(jd):

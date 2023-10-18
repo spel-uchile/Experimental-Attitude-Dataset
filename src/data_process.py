@@ -26,17 +26,18 @@ class RealData:
         self.data = pd.read_excel(folder + file_directory)
         self.data.sort_values(by=['timestamp'], inplace=True)
         self.data.dropna(inplace=True)
-        self.data['jd'] = [timestamp_to_julian(ts) for ts in self.data['timestamp'].values]
+        self.data.reset_index(inplace=True)
+        self.data['jd'] = [timestamp_to_julian(float(ts)) for ts in self.data['timestamp'].values]
         self.data[['acc_x', 'acc_y', 'acc_z']] *= np.deg2rad(1)
 
     def create_datetime_from_timestamp(self, time_format):
-        self.data['DateTime'] = [datetime.datetime.fromtimestamp(ts).strftime(time_format)
+        self.data['DateTime'] = [datetime.datetime.fromtimestamp(ts).replace(tzinfo=datetime.timezone.utc).strftime(time_format)
                                  for ts in self.data['timestamp']]
 
     def plot_key(self, to_plot: list, show: bool = False):
         plt.figure()
         plt.grid()
-        plt.step(self.data['jd'], self.data[to_plot])
+        plt.plot(self.data['jd'], self.data[to_plot])
         plt.show() if show else None
 
     def search_nearly_tle(self):
@@ -90,8 +91,10 @@ class RealData:
             temp = np.argwhere(model.labels_ == selected_cluster)
             self.data = self.data.iloc[list(temp.T)[0]]
         else:
-            init = datetime.datetime.strptime(start_str, format_time).timestamp()
-            stop = datetime.datetime.strptime(stop_str, format_time).timestamp()
+            init = datetime.datetime.strptime(start_str, format_time)
+            stop = datetime.datetime.strptime(stop_str, format_time)
+            init = init.replace(tzinfo=datetime.timezone.utc).timestamp()
+            stop = stop.replace(tzinfo=datetime.timezone.utc).timestamp()
             temp = np.argwhere((init <= self.data['timestamp']) & (self.data['timestamp'] <= stop))
             self.data = self.data.iloc[list(temp.T)[0]]
 

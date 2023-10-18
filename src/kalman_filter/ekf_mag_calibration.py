@@ -16,7 +16,7 @@ class MagEKF():
         d_est_ = np.zeros(6)
         self.x_est = np.array([*b_est_, *d_est_])
 
-        b_est_std = np.ones(3) * 1
+        b_est_std = np.ones(3) * 50
         d_est_std = np.ones(6) * 1e-2
         self.pCov = np.diag([*b_est_std, *d_est_std])  # (uT)^2
         self.historical = {'bias': [], 'scale': [], 'error': [], 'P': []}
@@ -30,7 +30,7 @@ class MagEKF():
 
         error_measure = self.y_k_error(mag_measure, mag_reference)
         error_model = self.error_measurement_model(mag_measure, current_x)
-        error_ = error_measure - error_model
+        error_ = (error_measure - error_model) * 1e-6
         self.historical['error'].append(error_)
         print("Error: ", error_)
         jH = self.sensitivity_matrix_H(current_x, mag_measure)
@@ -46,7 +46,7 @@ class MagEKF():
         return bias_, d_
 
     def plot(self, new_sensor):
-        fig, axes = plt.subplots(1, 3)
+        fig, axes = plt.subplots(3, 1)
         axes[0].grid()
         axes[0].set_title('Bias')
         axes[0].plot(self.historical['bias'])
@@ -129,11 +129,11 @@ class MagEKF():
         b_est_ = x_est[:3]
         d_vector = x_est[3:]
         D_ = get_full_D(d_vector)
-        temp1 = -self.S_k(mag_sensor_).T @ self.E_true(D_)
-        temp2 = 2 * mag_sensor_ @ ((np.eye(3) + D_) @ b_est_)
-        temp3 = - np.linalg.norm(b_est_) ** 2
-        h_k_ = temp1 + temp2 + temp3
-        # temp = -mag_sensor_ @ (2 * D_ + D_ @ D_) @ mag_sensor_ + 2 * mag_sensor_.T @ (np.eye(3) + D_) @ b_est_ - np.linalg.norm(b_est_) ** 2
+        # temp1 = -self.S_k(mag_sensor_).T @ self.E_true(D_)
+        # temp2 = 2 * mag_sensor_ @ ((np.eye(3) + D_) @ b_est_)
+        # temp3 = - np.linalg.norm(b_est_) ** 2
+        # h_k_ = temp1 + temp2 + temp3
+        h_k_ = -mag_sensor_ @ (2 * D_ + D_ @ D_) @ mag_sensor_ + 2 * mag_sensor_.T @ (np.eye(3) + D_) @ b_est_ - np.linalg.norm(b_est_) ** 2
         return h_k_
 
     @staticmethod

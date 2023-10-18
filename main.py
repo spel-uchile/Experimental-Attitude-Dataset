@@ -6,7 +6,7 @@ email: els.obrq@gmail.com
 import matplotlib.pyplot as plt
 import numpy as np
 import datetime
-
+import sys
 from src.kalman_filter.ekf_multy import MEKF
 from src.kalman_filter.ekf_mag_calibration import MagEKF
 from src.kalman_filter.ekf_full import MEKF_FULL
@@ -17,31 +17,35 @@ from src.dynamics.MagEnv import MagEnv
 
 from tools.get_video_frame import save_frame
 from tools.monitor import Monitor
+import importlib.util
 
 # CONFIG
 PROJECT_FOLDER = "data/M-20230824/"
-OBC_DATA = "gyros-S3-240823.xlsx"
-VIDEO_DATA = "20230824-att1-original.mp4"  # reference unit time
+module_name = "dataconfig"
 
-# data wind time
-WINDOW_TIME = {'Start': '2023/08/24 10:44:09',
-               'Stop': '2023/08/24 11:40:43',
-               'STEP': 1,
-               'FLAG': True}
-TIME_FORMAT = "%Y/%m/%d %H:%M:%S"
+# Cargamos el módulo desde la ruta
+spec = importlib.util.spec_from_file_location(module_name, PROJECT_FOLDER + module_name + ".py")
+myconfig = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(myconfig)
 
-ONLINE_MAG_CALIBRATION = False
-CREATE_FRAME = False
-GET_VECTOR_FROM_PICTURE = True
-EKF_SETUP = 'NORMAL'
+CREATE_FRAME = myconfig.CREATE_FRAME
+VIDEO_DATA = myconfig.VIDEO_DATA
+GET_VECTOR_FROM_PICTURE = myconfig.GET_VECTOR_FROM_PICTURE
+OBC_DATA = myconfig.OBC_DATA
+TIME_FORMAT = myconfig.TIME_FORMAT
+WINDOW_TIME = myconfig.WINDOW_TIME
+ONLINE_MAG_CALIBRATION = myconfig.ONLINE_MAG_CALIBRATION
+EKF_SETUP = myconfig.EKF_SETUP
+IMAGEN_DATA = myconfig.IMAGEN_DATA
 
 
 if __name__ == '__main__':
-    if CREATE_FRAME:
+    if CREATE_FRAME and VIDEO_DATA is not None:
         save_frame(PROJECT_FOLDER, VIDEO_DATA)
 
-    if GET_VECTOR_FROM_PICTURE:
+    if GET_VECTOR_FROM_PICTURE and IMAGEN_DATA is not None:
         pass
+
     # create data with datetime, and near tle
     sensors = RealData(PROJECT_FOLDER, OBC_DATA)
     sensors.create_datetime_from_timestamp(TIME_FORMAT)
@@ -84,7 +88,7 @@ if __name__ == '__main__':
         sensors.calibrate_mag(by_file=True)
         ekf_mag_cal = MagEKF()
         for mag_i_, mag_b_ in zip(mag_i, sensors.data[['mag_x', 'mag_y', 'mag_z']].values):
-            ekf_mag_cal.update_state(mag_b_, mag_i_, cov_sensor_=0.0001)
+            ekf_mag_cal.update_state(mag_b_, mag_i_, cov_sensor_=100)
             bias_, D_scale = ekf_mag_cal.get_calibration()
             new_sensor.append((np.eye(3) + D_scale) @ mag_b_ - bias_)
         ekf_mag_cal.plot(np.asarray(new_sensor) - mag_i)
@@ -119,11 +123,11 @@ if __name__ == '__main__':
 
     if EKF_SETUP == 'NORMAL':
         # MEKF
-        P = np.diag([0.5, 0.5, 0.5, 0.1, 0.1, 0.01])
+        P = np.diag([0.5, 0.5, 0.5, 0.1, 0.1, 0.1])
         ekf_model = MEKF(inertia, P=P, Q=np.zeros((6, 6)), R=np.zeros((3, 3)))
-        ekf_model.sigma_bias = 0.0005
+        ekf_model.sigma_bias = 0.001
         ekf_model.sigma_omega = 0.005
-        ekf_model.current_bias = np.array([0.03711, 0.0079, 0])
+        ekf_model.current_bias = np.array([0.0, 0.0, 0])
     elif EKF_SETUP == 'FULL':
         # MEKF
         P = np.diag([0.5, 0.5, 0.5, 0.001, 0.001, 0.001, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01])

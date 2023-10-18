@@ -30,7 +30,7 @@ class MEKF_FULL(EKF):
         self.k_u = np.zeros(3)
         self.sigma2_elements = np.array([np.sqrt(10) * 1e-10, np.sqrt(10) * 1e-7, 0, 0, 0])
 
-        self.historical = {'q_est': [], 'b': [np.zeros(3)], 'mag_est': [], 'omega_est': [],
+        self.historical = {'q_est': [], 'b_est': [np.zeros(3)], 'mag_est': [], 'omega_est': [],
                            'scale': [np.zeros(3)], 'ku': [np.zeros(3)], 'kl': [np.zeros(3)],
                            'p_cov': [self.covariance_P.flatten()]}
 
@@ -176,7 +176,7 @@ class MEKF_FULL(EKF):
         self.internal_state = np.zeros(15)
 
         self.historical['q_est'].append(self.current_quaternion)
-        self.historical['b'].append(self.current_bias)
+        self.historical['b_est'].append(self.current_bias)
         self.historical['scale'].append(self.scale)
         self.historical['ku'].append(self.k_u)
         self.historical['kl'].append(self.k_l)

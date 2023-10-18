@@ -143,7 +143,7 @@ class MEKF(EKF):
         self.state = np.zeros(6)
         self.internal_state = np.zeros(6)
         self.historical['q_est'].append(self.current_quaternion)
-        self.historical['b_est'].append(self.current_bias)
+        self.historical['b_est'].append(self.current_bias.copy())
         self.historical['p_cov'].append(self.covariance_P.flatten())
 
 
