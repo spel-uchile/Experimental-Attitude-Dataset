@@ -8,7 +8,7 @@ import numpy as np
 from ..dynamics.Quaternion import Quaternions
 from sklearn.metrics import mean_squared_error
 from tools.mathtools import *
-
+from tools.pso import PSOStandard
 
 rev_day = 15.23166528
 w_orbit = np.array([0, - 2 * np.pi * rev_day / 86400, 0])
@@ -24,6 +24,8 @@ class EKF:
         self.kf_Q = Q
         self.dim_rows = len(R)
         self.dim_cols = len(R[0])
+        self.sigma_omega = 0
+        self.sigma_bias = 0
         self.kf_S = np.zeros([self.dim_rows, self.dim_cols])
         self.kf_K = np.zeros([self.dim_rows, self.dim_cols])
         self.covariance_P = P
@@ -50,12 +52,29 @@ class EKF:
             self.state = new_x_k
             self.covariance_P = new_P_k
 
+    def static_update(self, guess_r, guess_qs, guess_qb, step, vector_b, vector_i):
+        self.kf_R = guess_r * np.eye(len(vector_i))
+        self.sigma_omega = guess_qs
+        self.sigma_bias = guess_qb
+
+        new_x_k, new_p_k = self.get_prediction(self.state, self.covariance_P, step)
+        vector_b = vector_b / np.linalg.norm(vector_b)
+        new_z_k = self.get_observer_prediction(new_x_k, vector_i, save=False)
+        print("residual angle error (deg): {}".format(np.rad2deg(1) * np.arccos(vector_b @ new_z_k)))
+        H = self.attitude_observer_model(new_x_k, vector_i / np.linalg.norm(vector_i))
+        self.update_covariance_matrix(H, new_p_k)
+        self.get_kalman_gain(H, self.internal_cov_P)
+        new_x_k = self.update_state(new_x_k, vector_b, new_z_k)
+        new_p_k = self.update_covariance_P_matrix(H, new_p_k)
+        return new_p_k
+
     def propagate(self, step):
         self.internal_state, self.internal_cov_P = self.get_prediction(self.state, self.covariance_P, step)
 
-    def inject_vector(self, vector_b, vector_i, sigma2):
+    def inject_vector(self, vector_b, vector_i, sigma2=None):
         vector_b = vector_b / np.linalg.norm(vector_b)
-        self.kf_R = sigma2 * np.eye(len(vector_i))
+        if sigma2 is not None:
+            self.kf_R = sigma2 * np.eye(len(vector_i))
         new_z_k = self.get_observer_prediction(self.internal_state, vector_i)
         print("residual angle error (deg): {}".format(np.rad2deg(1) * np.arccos(vector_b @ new_z_k)))
         H = self.attitude_observer_model(self.internal_state, vector_i/np.linalg.norm(vector_i))
@@ -92,6 +111,21 @@ class EKF:
     def get_internal_state(self):
         return self.internal_state
 
+    def optimize_R_Q(self, vector_b, vector_i, step):
+        r = np.random.uniform(0, 1.0, 10)
+        qs = np.random.uniform(0, 1.0, 10)
+        qb = np.random.uniform(0, 1.0, 10)
+        p_k_rq = []
+        for r_, q_s, q_b in zip(r, qs, qb):
+            p_k_rq.append(np.max(self.static_update(r_, q_s, q_b, step, vector_b, vector_i)))
+
+        print(p_k_rq)
+        # save index from r and q with minimum p_k_rq
+        index_min = np.argmin(p_k_rq)
+        self.kf_R = r[index_min]
+        self.sigma_omega = qs[index_min]
+        self.sigma_bias = qb[index_min]
+
     def get_prediction(self, x_est, P_est, step, u_ctrl=np.zeros(3)):
         new_x_k = self.attitude_discrete_model(x_est, u_ctrl, step)
         f_1 = self.attitude_jacobian_model(x_est, step)
@@ -101,7 +135,7 @@ class EKF:
         new_P_k = p1 + p2
         return new_x_k, new_P_k
 
-    def get_observer_prediction(self, new_x_k, reference_vector):
+    def get_observer_prediction(self, new_x_k, reference_vector, save=True):
         z_k = self.attitude_observer_model(new_x_k, reference_vector) @ reference_vector
         return z_k
 

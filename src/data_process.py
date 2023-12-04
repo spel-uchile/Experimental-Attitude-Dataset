@@ -27,6 +27,7 @@ class RealData:
         self.data.sort_values(by=['timestamp'], inplace=True)
         self.data.dropna(inplace=True)
         self.data.reset_index(inplace=True)
+        self.data['acc_z'] = -91 * np.ones_like(self.data['acc_z'])
         self.data['jd'] = [timestamp_to_julian(float(ts)) for ts in self.data['timestamp'].values]
         self.data[['acc_x', 'acc_y', 'acc_z']] *= np.deg2rad(1)
 

@@ -40,12 +40,12 @@ class MEKF(EKF):
         if save:
             self.historical['q_est'].append(self.current_quaternion)
 
-    def get_prediction(self, x_est, P_est, step, u_ctrl=np.zeros(3), measure=None):
+    def get_prediction(self, x_est, p_est, step, u_ctrl=np.zeros(3), measure=None):
         omega = self.omega_state - self.current_bias
         self.current_quaternion = self.attitude_discrete(self.current_quaternion, omega, step)
         new_x_k = np.zeros(6)
-        new_P_k = self.propagate_cov_P_sim(step, omega)
-        return new_x_k, new_P_k
+        new_p_k = self.propagate_cov_P_sim(step, omega)
+        return new_x_k, new_p_k
 
     def propagate_cov_P_sim(self, step, omega):
         f_x = np.zeros((6, 6))
@@ -55,7 +55,7 @@ class MEKF(EKF):
         self.kf_Q[:3, :3] = np.identity(3) * (self.sigma_omega ** 2 * step + 1 / 3 * self.sigma_bias ** 2 * step ** 3)
         self.kf_Q[3:, 3:] = np.identity(3) * self.sigma_bias ** 2 * step
         self.kf_Q[:3, 3:] = - np.identity(3) * 0.5 * self.sigma_bias ** 2 * step ** 2
-        self.kf_Q[3:, :3] = - np.identity(3) * 0.5 * self.sigma_bias ** 2 * step ** 2
+        self.kf_Q[3:, :3] = - np.identity(3) * 0.5 * self.sigma_omega ** 2 * step ** 2
 
         phi = (np.eye(6) + f_x + 0.5 * f_x @ f_x * step) * step
         new_p_k = phi.dot(self.covariance_P).dot(phi.T) + self.kf_Q
@@ -107,9 +107,10 @@ class MEKF(EKF):
         new_q /= np.linalg.norm(new_q)
         return new_q
 
-    def get_observer_prediction(self, new_x_k, reference_vector):
+    def get_observer_prediction(self, new_x_k, reference_vector, save=True):
         new_z_k = Quaternions(self.current_quaternion).frame_conv(reference_vector)
-        self.historical['mag_est'].append(new_z_k)
+        if save:
+            self.historical['mag_est'].append(new_z_k)
         new_z_k = new_z_k / np.linalg.norm(new_z_k)
         return new_z_k
 

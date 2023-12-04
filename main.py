@@ -126,7 +126,7 @@ if __name__ == '__main__':
         P = np.diag([0.5, 0.5, 0.5, 0.1, 0.1, 0.1])
         ekf_model = MEKF(inertia, P=P, Q=np.zeros((6, 6)), R=np.zeros((3, 3)))
         ekf_model.sigma_bias = 0.001
-        ekf_model.sigma_omega = 0.005
+        ekf_model.sigma_omega = 0.001
         ekf_model.current_bias = np.array([0.0, 0.0, 0])
     elif EKF_SETUP == 'FULL':
         # MEKF
@@ -146,13 +146,16 @@ if __name__ == '__main__':
                                                                mag_i[1:],
                                                                sensors.data[['mag_x', 'mag_y', 'mag_z']].values[1:],
                                                                sun_sc_i[1:]):
+        # Optimization of R and Q
+        # ekf_model.optimize_R_Q(body_vec_, mag_ref_, dt)
+
         # # integration
         ekf_model.propagate(dt)
 
         q_i2b = calc_quaternion(q_i2b, omega_b_model, dt)
         omega_b_model = calc_omega_b(omega_b_model, dt)
 
-        ekf_model.inject_vector(body_vec_, mag_ref_, sigma2=0.001)
+        ekf_model.inject_vector(body_vec_, mag_ref_, sigma2=0.1)
         ekf_model.historical['sun_b_est'].append(Quaternions(ekf_model.current_quaternion).frame_conv(sun_sc_i_))
         ekf_model.reset_state()
         omega_gyro_[2] = 0.0
@@ -163,6 +166,13 @@ if __name__ == '__main__':
         channels['omega_b'].append(omega_b_model)
 
     channels = {**channels, **ekf_model.historical}
+    error_mag = channels['mag_est'] - sensors.data[['mag_x', 'mag_y', 'mag_z']].values
+
+    plt.figure()
+    plt.title("Error")
+    plt.plot(error_mag)
+    plt.grid()
+
     monitor = Monitor(channels)
     monitor.set_position('sat_pos_i')
     monitor.set_quaternion('q_est')
