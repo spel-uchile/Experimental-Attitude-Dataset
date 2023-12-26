@@ -45,6 +45,8 @@ if __name__ == '__main__':
     # get circular orbit position from time array
     time_array = np.linspace(0, 36 * 12, 2000)
     position = fibonacci_sphere()
+
+
     # plot position 3d in pyvista
     plotter = pv.Plotter()
     # add sphere of radius one

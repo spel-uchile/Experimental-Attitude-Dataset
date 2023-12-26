@@ -9,7 +9,7 @@ import datetime
 import sys
 from src.kalman_filter.ekf_multy import MEKF
 from src.kalman_filter.ekf_mag_calibration import MagEKF
-from src.kalman_filter.ekf_full import MEKF_FULL
+# from src.kalman_filter.ekf_full import MEKF_FULL
 from src.data_process import RealData
 from src.dynamics.dynamics_kinematics import *
 from src.dynamics.Quaternion import Quaternions
@@ -38,7 +38,6 @@ ONLINE_MAG_CALIBRATION = myconfig.ONLINE_MAG_CALIBRATION
 EKF_SETUP = myconfig.EKF_SETUP
 IMAGEN_DATA = myconfig.IMAGEN_DATA
 
-
 if __name__ == '__main__':
     if CREATE_FRAME and VIDEO_DATA is not None:
         save_frame(PROJECT_FOLDER, VIDEO_DATA)
@@ -56,7 +55,7 @@ if __name__ == '__main__':
     else:
         sensors.set_window_time()
     line1, line2 = sensors.search_nearly_tle()
-
+    print(line1, line2)
     # TIME
     dt = WINDOW_TIME['STEP']
     start_datetime = datetime.datetime.strptime(WINDOW_TIME['Start'], TIME_FORMAT)
@@ -123,7 +122,7 @@ if __name__ == '__main__':
 
     if EKF_SETUP == 'NORMAL':
         # MEKF
-        P = np.diag([0.5, 0.5, 0.5, 0.1, 0.1, 0.1])
+        P = 10 * np.diag([0.5, 0.5, 0.5, 0.1, 0.1, 0.1])
         ekf_model = MEKF(inertia, P=P, Q=np.zeros((6, 6)), R=np.zeros((3, 3)))
         ekf_model.sigma_bias = 0.001
         ekf_model.sigma_omega = 0.001
@@ -136,16 +135,24 @@ if __name__ == '__main__':
         ekf_model.sigma_omega = 0.0005
 
     ekf_model.set_quat(q_i2b, save=True)
-    ekf_model.get_observer_prediction(None, mag_i[0])
+
+    ekf_model.save_vector(name='mag_est', vector=sensors.data[['mag_x', 'mag_y', 'mag_z']].values[0])
+    ekf_model.save_vector(name='css_est', vector=sensors.data[['sun3', 'sun2', 'sun4']].values[0])
+
     omega_b_model = omega_b
     ekf_model.set_gyro_measure(omega_b)
     k = 1
+    Imax = 930
     ekf_model.historical['sun_b_est'] = [Quaternions(q_i2b).frame_conv(sun_sc_i[0])]
-    for t_, omega_gyro_, mag_ref_, body_vec_, sun_sc_i_ in zip(time_vector[1:],
-                                                               sensors.data[['acc_x', 'acc_y', 'acc_z']].values[1:],
-                                                               mag_i[1:],
-                                                               sensors.data[['mag_x', 'mag_y', 'mag_z']].values[1:],
-                                                               sun_sc_i[1:]):
+    for t_, omega_gyro_, mag_ref_, body_vec_, sun_sc_i_, css_3_ in zip(time_vector[1:],
+                                                                       sensors.data[['acc_x', 'acc_y', 'acc_z']].values[
+                                                                       1:],
+                                                                       mag_i[1:],
+                                                                       sensors.data[['mag_x', 'mag_y', 'mag_z']].values[
+                                                                       1:],
+                                                                       sun_sc_i[1:],
+                                                                       sensors.data[['sun3', 'sun2', 'sun4']].values[
+                                                                       1:]):
         # Optimization of R and Q
         # ekf_model.optimize_R_Q(body_vec_, mag_ref_, dt)
 
@@ -155,8 +162,18 @@ if __name__ == '__main__':
         q_i2b = calc_quaternion(q_i2b, omega_b_model, dt)
         omega_b_model = calc_omega_b(omega_b_model, dt)
 
-        ekf_model.inject_vector(body_vec_, mag_ref_, sigma2=0.1)
-        ekf_model.historical['sun_b_est'].append(Quaternions(ekf_model.current_quaternion).frame_conv(sun_sc_i_))
+        # mag
+        mag_est = ekf_model.inject_vector(body_vec_, mag_ref_, sigma2=10000, sensor='mag')
+        # css
+        css_est = np.zeros(3)
+        is_dark = shadow_zone(sat_pos[k], sun_pos[k])
+        if not is_dark:
+            css_est = ekf_model.inject_vector(css_3_, sun_sc_i_, gain=-Imax * np.eye(3), sigma2=10, sensor='css')
+
+        ekf_model.save_vector(name='mag_est', vector=mag_est)
+        ekf_model.save_vector(name='css_est', vector=css_est)
+
+        ekf_model.save_vector(name='sun_b_est', vector=Quaternions(ekf_model.current_quaternion).frame_conv(sun_sc_i_))
         ekf_model.reset_state()
         omega_gyro_[2] = 0.0
         ekf_model.set_gyro_measure(omega_gyro_)
@@ -164,6 +181,7 @@ if __name__ == '__main__':
         # save data
         channels['q_i2b'].append(q_i2b)
         channels['omega_b'].append(omega_b_model)
+        k += 1
 
     channels = {**channels, **ekf_model.historical}
     error_mag = channels['mag_est'] - sensors.data[['mag_x', 'mag_y', 'mag_z']].values
@@ -192,6 +210,7 @@ if __name__ == '__main__':
     monitor.plot(x_dataset='full_time', y_dataset='q_est')
     monitor.plot(x_dataset='full_time', y_dataset='omega_est')
     monitor.plot(x_dataset='full_time', y_dataset='mag_est')
+    monitor.plot(x_dataset='full_time', y_dataset='css_est')
     monitor.plot(x_dataset='full_time', y_dataset='sun_b_est')
     monitor.plot(x_dataset='full_time', y_dataset='p_cov')
     if EKF_SETUP == 'FULL':

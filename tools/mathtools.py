@@ -194,3 +194,18 @@ def Bmatrix_mrp(sigma):
     b_matrix[2, 0] = sigma[2] * sigma[0] - sigma[1]
     b_matrix[2, 1] = sigma[2] * sigma[1] + sigma[0]
     return b_matrix * 2
+
+
+def shadow_zone(sc_pos_from_center_i, sun_pos_from_center_i, center_object_radius=6378.135):
+    point_prodcut = np.dot(sun_pos_from_center_i, sc_pos_from_center_i)
+    r_sun = np.linalg.norm(sun_pos_from_center_i)
+    r_sc = np.linalg.norm(sc_pos_from_center_i)
+    theta = np.arccos(point_prodcut/(r_sc * r_sun))
+    theta_sun = np.arccos(center_object_radius / r_sun)
+    theta_sc = np.arccos(center_object_radius / r_sc)
+    if theta_sc + theta_sun < theta:
+        # Shadow
+        is_dark = True
+    else:
+        is_dark = False
+    return is_dark

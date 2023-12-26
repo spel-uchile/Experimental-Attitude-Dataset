@@ -24,7 +24,7 @@ class MEKF(EKF):
         self.sigma_omega = 0
         self.sigma_bias = 0
         self.historical = {'q_est': [], 'b_est': [np.zeros(3)], 'mag_est': [], 'omega_est': [],
-                           'p_cov': [self.covariance_P.flatten()]}
+                           'p_cov': [self.covariance_P.flatten()], 'css_est': []}
 
     def add_reference_vector(self, vector):
         self.reference_vector = vector
@@ -107,21 +107,27 @@ class MEKF(EKF):
         new_q /= np.linalg.norm(new_q)
         return new_q
 
-    def get_observer_prediction(self, new_x_k, reference_vector, save=True):
+    def get_observer_prediction(self, new_x_k, reference_vector, save=True, sensor_type='mag'):
         new_z_k = Quaternions(self.current_quaternion).frame_conv(reference_vector)
         if save:
-            self.historical['mag_est'].append(new_z_k)
-        new_z_k = new_z_k / np.linalg.norm(new_z_k)
+            if sensor_type == 'mag':
+                new_z_k = new_z_k # / np.linalg.norm(new_z_k)
+            elif sensor_type == 'css':
+                new_z_k = - 930 * np.eye(3) @ new_z_k / np.linalg.norm(new_z_k)
+                new_z_k[new_z_k < 0] = 0
         return new_z_k
+
+    def save_vector(self, name=None, vector=None):
+        self.historical[name].append(vector)
 
     def attitude_observer_model(self, new_x, vector_i):
         H = np.zeros((3, 6))
         H[:3, :3] = skew(Quaternions(self.current_quaternion).frame_conv(vector_i))
         return H
 
-    def update_state(self, new_x_k, z_k_medido, z_from_observer):
+    def update_state(self, new_x_k, z_k_medido, z_from_observer, H_):
         error = z_k_medido - z_from_observer
-        correction = self.kf_K @ error
+        correction = self.kf_K @ error + self.kf_K @ H_ @ new_x_k
         if np.any(np.isnan(correction)):
             print("correction: {}".format(correction))
         new_x = new_x_k + correction

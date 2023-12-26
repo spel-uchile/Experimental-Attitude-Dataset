@@ -71,17 +71,22 @@ class EKF:
     def propagate(self, step):
         self.internal_state, self.internal_cov_P = self.get_prediction(self.state, self.covariance_P, step)
 
-    def inject_vector(self, vector_b, vector_i, sigma2=None):
-        vector_b = vector_b / np.linalg.norm(vector_b)
+    def inject_vector(self, vector_b, vector_i, gain=None, sensor='mag', sigma2=None):
         if sigma2 is not None:
             self.kf_R = sigma2 * np.eye(len(vector_i))
-        new_z_k = self.get_observer_prediction(self.internal_state, vector_i)
-        print("residual angle error (deg): {}".format(np.rad2deg(1) * np.arccos(vector_b @ new_z_k)))
-        H = self.attitude_observer_model(self.internal_state, vector_i/np.linalg.norm(vector_i))
+        new_z_k = self.get_observer_prediction(self.internal_state, vector_i, sensor_type=sensor)
+        H = self.attitude_observer_model(self.internal_state, vector_i)
+        if gain is not None:
+            H[:3, :3] = gain @ H[:3, :3] / np.linalg.norm(vector_i)
+            print("residual MRSE error (deg): {}".format(mean_squared_error(new_z_k, vector_b)))
+        else:
+            print("residual angle error (deg): {}".format(
+                np.rad2deg(1) * np.arccos(vector_b / np.linalg.norm(vector_b) @ new_z_k / np.linalg.norm(new_z_k))))
         self.update_covariance_matrix(H, self.internal_cov_P)
         self.get_kalman_gain(H, self.internal_cov_P)
-        self.internal_state = self.update_state(self.internal_state, vector_b, new_z_k)
+        self.internal_state = self.update_state(self.internal_state, vector_b, new_z_k, H)
         self.internal_cov_P = self.update_covariance_P_matrix(H, self.internal_cov_P)
+        return new_z_k
 
     def inject_vector_6(self, vector1_b, vector1_i, vector2_b, vector2_i, sigma1, sigma2):
         self.kf_R = sigma2 * np.eye(6)
@@ -135,7 +140,7 @@ class EKF:
         new_P_k = p1 + p2
         return new_x_k, new_P_k
 
-    def get_observer_prediction(self, new_x_k, reference_vector, save=True):
+    def get_observer_prediction(self, new_x_k, reference_vector, save=True, sensor_type='mag'):
         z_k = self.attitude_observer_model(new_x_k, reference_vector) @ reference_vector
         return z_k
 
@@ -156,8 +161,8 @@ class EKF:
             s_inv = 1/self.kf_S
             self.kf_K = new_P_k.dot(H.T) * s_inv
 
-    def update_state(self, new_x_k, z_k_medido, z_from_observer):
-        new_x = new_x_k + self.kf_K.dot(z_k_medido - z_from_observer)
+    def update_state(self, new_x_k, z_k_medido, z_from_observer, H_):
+        new_x = new_x_k + self.kf_K.dot(z_k_medido - z_from_observer + H_ @ new_x_k)
         new_x[:3] = new_x[:3] / np.linalg.norm(new_x[:3])
         return new_x
 
