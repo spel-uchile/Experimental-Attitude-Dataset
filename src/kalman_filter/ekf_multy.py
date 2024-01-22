@@ -24,7 +24,7 @@ class MEKF(EKF):
         self.sigma_omega = 0
         self.sigma_bias = 0
         self.historical = {'q_est': [], 'b_est': [np.zeros(3)], 'mag_est': [], 'omega_est': [],
-                           'p_cov': [self.covariance_P.flatten()], 'css_est': []}
+                           'p_cov': [self.covariance_P.flatten()], 'css_est': [], 'sun_b_est': []}
 
     def add_reference_vector(self, vector):
         self.reference_vector = vector

@@ -1,4 +1,4 @@
-setuptools==68.1.2
+setuptools~=68.1.2
 wheel==0.41.2
 numpy~=1.25.2
 sgp4~=2.22
@@ -11,3 +11,4 @@ pyvista~=0.42.0
 pyquaternion~=0.9.9
 Pillow~=10.0.0
 PySide2~=5.15.2.1
+filterpy~=1.4.5
