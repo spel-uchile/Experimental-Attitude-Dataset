@@ -49,7 +49,7 @@ def decrease_color(im, ncol, plot=False):
     XG = G.reshape((-1, 1))
     XB = B.reshape((-1, 1))
     X = np.concatenate((XR, XG, XB), axis=1)
-    k_means = KMeans(n_clusters=ncol)
+    k_means = KMeans(n_clusters=ncol, n_init=10)
     k_means.fit(X)
     centroides = k_means.cluster_centers_
     etiquetas = k_means.labels_

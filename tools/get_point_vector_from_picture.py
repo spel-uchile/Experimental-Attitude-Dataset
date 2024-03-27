@@ -4,14 +4,14 @@ Date: 16-09-2023
 email: els.obrq@gmail.com
 """
 
-from PIL import Image, ImageFilter
-from scipy import optimize, ndimage
+from PIL import Image, ImageFilter, ImageDraw
+# from tools.my_scipy import optimize
+from scipy import optimize
+# from tools.my_scipy.optimize import fsolve
 from scipy.optimize import fsolve
 from tools.clustering import cluster, decrease_color
 import numpy as np
-import cv2
 import os
-from tools.pso import PSOStandard
 import matplotlib.pyplot as plt
 
 re = 6378.137  # km
@@ -20,8 +20,18 @@ DEG2RAD = 1 / RAD2DEG
 au = 149597870.691  # km
 d_sun = 1.3927e-9
 rs = au
-sensor_width = 2.74 * 1e-3  # m
-flength = 0.00304
+sensor_width_h = 3.68e-3  # m
+sensor_width_v = 2.76e-3  # m
+
+sensor_pixel_h = sensor_width_h / 3280
+sensor_pixel_v = sensor_width_v / 2464
+fov_h = 62.2 # deg
+fov_v = 48.8 # deg
+resolution_video_h = sensor_width_h / 102
+resolution_video_v = sensor_width_v / 102
+
+# sensor_width = 2.76 * 1e-3  # m
+focal_length = 0.00304
 
 MAX_NUM_LINES = 3
 
@@ -101,8 +111,9 @@ def rgb_to_gray(R, G, B):
     return int(R * 299 / 1000 + G * 587 / 1000 + B * 114 / 1000)
 
 
-def get_body(col, show=True):
-    fig, ax = plt.subplots(1, 7, figsize=(15, 5))
+def get_body(col, file_name, show=True):
+    fig_h, ax_h = plt.subplots()
+    fig, ax = plt.subplots(1, 6, figsize=(15, 5), sharey=True)
     fig.suptitle('Test')
     fig.tight_layout()
     ax[0].imshow(col)
@@ -114,47 +125,58 @@ def get_body(col, show=True):
     ax[1].imshow(new_col / 255)
     ax[1].set_title("KMeans")
     thereisblack = False
-    for elem in lighter_colors:
-        finding_color = {}
-        finding_color['black'] = True if np.mean(elem) < 20 else False
-        finding_color['white'] = True if np.mean(elem) > 240 else False
-        finding_color['red'] = False
-        finding_color['green'] = False
-        finding_color['blue'] = False
-        if (finding_color['white'] or finding_color['black']) is False:
-            finding_color['red'] = True if elem[0] > np.mean(elem) + 30 else False
-            finding_color['green'] = True if elem[1] > np.mean(elem) + 30 else False
-            finding_color['blue'] = True if elem[2] > np.mean(elem) + 30 else False
-        thereisblack = finding_color['black']
-        color_label.append(finding_color)
-
-    # Blue filter
-    for i, color_l in enumerate(color_label):
-        if color_l['blue'] and thereisblack:
-            blue_no_black = np.max(new_col, axis=2) - np.min(new_col, axis=2) > 10
-            new_col[blue_no_black] = lighter_colors[0]
+    # for elem in lighter_colors:
+    #     finding_color = {}
+    #     finding_color['black'] = True if np.mean(elem) < 20 else False
+    #     finding_color['white'] = True if np.mean(elem) > 240 else False
+    #     finding_color['red'] = False
+    #     finding_color['green'] = False
+    #     finding_color['blue'] = False
+    #     if (finding_color['white'] or finding_color['black']) is False:
+    #         finding_color['red'] = True if elem[0] > np.mean(elem) + 30 else False
+    #         finding_color['green'] = True if elem[1] > np.mean(elem) + 30 else False
+    #         finding_color['blue'] = True if elem[2] > np.mean(elem) + 30 else False
+    #     thereisblack = finding_color['black']
+    #     color_label.append(finding_color)
+    #
+    # # Blue filter
+    # for i, color_l in enumerate(color_label):
+    #     if color_l['blue'] and thereisblack:
+    #         blue_no_black = np.max(new_col, axis=2) - np.min(new_col, axis=2) > 12
+    #         new_col[blue_no_black] = lighter_colors[0]
 
     col.putdata([tuple(colors) for colors in new_col.reshape(-1, 3)])
-    ax[2].imshow(col)
-    ax[2].set_title("Blue Filter")
     gray = col.convert('L')
     lighter_gray = [rgb_to_gray(r, g, b) for r, g, b in zip(lighter_colors[:, 0],
                                                             lighter_colors[:, 1],
                                                             lighter_colors[:, 2])]
     bw = np.asarray(gray).copy()
+    img_gray_smooth = gray.filter(ImageFilter.SMOOTH)
     bw = bw / 255
-    if counts[-1] > 4 * counts[-2] and color_label[-1]['black']:
-        bw = bw ** (1 / 2)
-    ax[3].imshow(bw)
-    ax[3].set_title("Gray")
-    # bw = bw ** 2
-    bw[np.where(bw < 0.98 * max(lighter_gray) / 255)] = 0.0
-    bw[np.where(bw >= 0.98 * max(lighter_gray) / 255)] = 1.0
+    # bw = bw ** (1 / 2)
+    # if counts[-1] > 4 * counts[-2] and color_label[-1]['black']:
+    #     bw = bw ** (1 / 2)
+
+    ax_h.plot(np.arange(0, bw.shape[1]), np.sum(bw, axis=0), label="X")
+    ax_h.plot(np.arange(0, bw.shape[0]), np.sum(bw, axis=1), label="Y")
+    ax_h.set_title("Histogram")
+    ax_h.grid()
+    ax_h.legend()
+    ax[2].imshow(bw)
+    ax[2].set_title("Gray")
+
+    hist = np.histogram(bw, bins=256)[1]
+    max_hist = np.max(hist)
+    min_hist = np.min(hist)
+    mean_cut = np.max([(max_hist + min_hist) / 2, np.mean(hist)])
+    bw[np.where(bw < mean_cut)] = 0.0
+    bw[np.where(bw >= mean_cut)] = 1.0
     bw_temp = []
-    ax[4].imshow(bw)
-    ax[4].set_title("Binarize")
+
+    ax[3].imshow(bw)
+    ax[3].set_title("Binarize")
     # bw_earth, bw_sun = separate_body(bw)
-    labeled_array, num_features = ndimage.label(bw)
+    labeled_array, num_features = etiquetar_objetos(bw)
     if num_features > 1:
         k = 0
         for i in range(num_features + 1):
@@ -164,20 +186,63 @@ def get_body(col, show=True):
                 temp = np.zeros(bw.shape)
                 temp[points] = 1
                 bw_temp.append(temp)
-                ax[5 + k].imshow(temp)
-                ax[5 + k].set_title("Body - {}".format(k))
+                ax[4 + k].imshow(temp)
+                ax[4 + k].set_title("Body - {}".format(k))
                 k += 1
                 if k == 2:
                     break
+            else:
+                ax[5].imshow(bw * 0)
+                ax[5].set_title("None")
     else:
         bw_temp.append(bw)
-        ax[5].imshow(bw)
-        ax[5].set_title("Body")
-    plt.show() if show else None
+        ax[4].imshow(bw)
+        ax[4].set_title("Body")
+        ax[5].imshow(bw * 0)
+        ax[5].set_title("None")
+    # create folder
+    name_folder = 'process'
+    folder_ = ''.join([el + '/' for el in file_name.split('/')[:-1]])
+    if not os.path.exists(folder_ + name_folder):
+        os.makedirs(folder_ + name_folder)
+    fig.savefig("{}_process.png".format(folder_ + name_folder + '/' + file_name.split('/')[-1][:-4]))
+    fig_h.savefig("{}_hist.png".format(folder_ + name_folder + '/' + file_name.split('/')[-1][:-4]))
+    plt.close(fig=fig)
+    plt.close(fig=fig_h)
     return bw_temp
 
 
+def etiquetar_objetos(imagen):
+    # Inicializamos la matriz de etiquetas
+    etiquetas = np.zeros_like(imagen, dtype=int)
+    etiqueta_actual = 0
+
+    # Recorremos la imagen
+    for i in range(imagen.shape[0]):
+        for j in range(imagen.shape[1]):
+            # Si el pixel actual es parte de un objeto (no es cero)
+            # y aún no ha sido etiquetado, le asignamos una nueva etiqueta
+            if imagen[i, j] != 0 and etiquetas[i, j] == 0:
+                etiqueta_actual += 1
+                etiquetas[i, j] = etiqueta_actual
+
+                # Buscamos todos los otros pixeles conectados a este
+                # y les asignamos la misma etiqueta
+                pixeles_a_chequear = [(i, j)]
+                while pixeles_a_chequear:
+                    x, y = pixeles_a_chequear.pop()
+                    for dx in [-1, 0, 1]:
+                        for dy in [-1, 0, 1]:
+                            nx, ny = x + dx, y + dy
+                            if (0 <= nx < imagen.shape[0] and 0 <= ny < imagen.shape[1] and
+                                    imagen[nx, ny] != 0 and etiquetas[nx, ny] == 0):
+                                etiquetas[nx, ny] = etiqueta_actual
+                                pixeles_a_chequear.append((nx, ny))
+    return etiquetas, etiqueta_actual
+
+
 def get_type_radius(im_list):
+
     def calc_R(yc, xc, x, y):
         """ calculate the distance of each data points from the center (xc, yc) """
         return np.sqrt((x - xc) ** 2 + (y - yc) ** 2)
@@ -224,23 +289,25 @@ def get_type_radius(im_list):
             lines.append(edge_array[delta_ + k] - edge_array[k])
             if k >= len(points[0]) - delta_ - 1:
                 break
-        center_estimate = np.mean(edge_array, axis=0)
+        # mean
+        x_mean = np.sum([np.array(elem) * np.arange(0, np.shape(im)[1]) for elem in im]) / np.count_nonzero(im)
+        y_mean = np.sum([np.array(elem) * i for i, elem in enumerate(im)]) / np.count_nonzero(im)
+        center_estimate = np.array([y_mean, x_mean], dtype=int)
         points_center = edge_array[:-delta_] + np.array(lines) * 0.5
 
         center_2d_index, ier = optimize.leastsq(f_2b, center_estimate, args=points_center, Dfun=Df_2b, col_deriv=True)
-        points_c = points_center
-
         center_2d_index_list.append(center_2d_index)
-        radius = calc_R(center_2d_index[0], center_2d_index[1], points_center[:, 1], points_center[:, 0])
+        radius = calc_R(center_2d_index[1], center_2d_index[0], points_center[:, 1], points_center[:, 0])
         radius_list.append([np.mean(radius), np.std(radius)])
         edge_array_list.append(edge_array)
-        points_c_list.append(points_c)
+        points_c_list.append(points_center)
     return radius_list, point_list
 
 
-def calc_hyperbola(points, fl, pw, ph, h, shape_):
+def calc_hyperbola(points, fl, pw, ph, h, shape_, center_is_into_):
+    # https://link.springer.com/article/10.1007/s12567-022-00461-0
     edge_array = np.array([points[0], points[1]]).T
-    delta_ = 2
+    delta_ = 5
     lines = []
     for k in range(len(points[0])):
         lines.append(edge_array[delta_ + k] - edge_array[k])
@@ -258,12 +325,36 @@ def calc_hyperbola(points, fl, pw, ph, h, shape_):
     y = np.cos(alpha) * np.array([np.linalg.norm(p_c_i) for p_c_i in p_c])
     e_c = np.linalg.inv(hh.T.dot(hh)).dot(hh.T).dot(y)
     e_c /= np.linalg.norm(e_c)
-
-    center_pixel = np.zeros(2, dtype=np.int16)
     vec_pix = (e_c * fl / e_c[2])[:2]
+    center_pixel = np.zeros(2, dtype=np.int16)
     center_pixel[0] = np.int16(vec_pix[0] / pw + shape_[0] * 0.5)
     center_pixel[1] = np.int16(vec_pix[1] / ph + shape_[1] * 0.5)
-    return edge_array, points_center, e_c, center_pixel
+    # angles
+    if center_is_into_:
+        far_center = np.argmin(np.sqrt(np.array(p_c)[:, 0] ** 2 + np.array(p_c)[:, 1] ** 2))
+        # far_distance = np.sqrt(np.array(p_c)[:, 0] ** 2 + np.array(p_c)[:, 1] ** 2)[far_center]
+        vec = hh[far_center]
+        vec /= np.linalg.norm(vec)
+        near_angle = np.arccos(vec @ np.array([0, 0, 1]))
+        print(near_angle * np.rad2deg(1), np.linalg.norm(vec[:2]))
+        pitch = np.pi * 0.5 - alpha + near_angle
+    else:
+        near_center = np.argmin(np.sqrt(np.array(p_c)[:, 0] ** 2 + np.array(p_c)[:, 1] ** 2))
+        # near_distance = np.sqrt(np.array(p_c)[:, 0] ** 2 + np.array(p_c)[:, 1] ** 2)[near_center]
+        vec = hh[near_center]
+        vec /= np.linalg.norm(vec)
+        near_angle = np.arccos(vec @ np.array([0, 0, 1]))
+        print(near_angle * np.rad2deg(1), np.linalg.norm(vec[:2]))
+        pitch = np.pi * 0.5 - alpha - near_angle
+    # mean_point = np.mean(p_c, axis=0)
+    # roll = np.arctan2(mean_point[1], mean_point[0])
+
+
+    # pitch = np.pi * 0.5 - np.arccos(e_c @ np.array([0, 0, 1]))
+    roll = np.arctan2(vec_pix[1], vec_pix[0])
+    # center_pixel[0] = int(mean_point[0] / pw + shape_[1] * 0.5)
+    # center_pixel[1] = int(mean_point[1] / pw + shape_[0] * 0.5)
+    return edge_array, points_center, e_c, center_pixel, pitch, roll
 
 
 def calc_sun_curvature(points, fl, pw, ph, shape_, h):
@@ -293,61 +384,114 @@ def calc_sun_curvature(points, fl, pw, ph, shape_, h):
     return edge_array, points_center, sun_c, center_pixel
 
 
-def get_vector(file_name, height):
-    col = Image.open(file_name)
-    pixel_size_width = sensor_width / col.size[0]
-    pixel_size_height = sensor_width / col.size[1]
-    bw_bodies = get_body(col.copy(), show=False)
-    radius_, point_list_ = get_type_radius(bw_bodies)
-
-    img_cv2_ = cv2.cvtColor(np.asarray(col), cv2.COLOR_RGB2BGR)
+def get_vector(file_name, height, height_img=None, width_img=None):
     edge_ = None
-    for body_, radii, pl in zip(bw_bodies, radius_, point_list_):
-        if 10 < radii[0] < 150:
-            "sun"
-            sun_edge_array, sun_points_center, sun_c, center_pixel = calc_sun_curvature(pl,
-                                                                                        flength,
-                                                                                        pixel_size_width,
-                                                                                        pixel_size_height,
-                                                                                        [col.size[0], col.size[1]],
-                                                                                        height)
-            edge_, img_cv2_ = get_lines(col, center_pixel)
-        elif radii[0] > 150:
-            "earth"
-            pixel_size = sensor_width / np.shape(body_)[0]
-            # Earth: Recalculate with hyperbolic geometry
-            earth_edge_array, earth_points_center, earth_c, center_pixel = calc_hyperbola(pl,
-                                                                                          flength,
-                                                                                          pixel_size_width,
-                                                                                          pixel_size_height,
-                                                                                          height,
-                                                                                          [col.size[0], col.size[1]],)
-    return edge_, img_cv2_
+    pitch_, roll_ = np.nan, np.nan
+    try:
+        col = Image.open(file_name)
+        if height_img is not None:
+          col = col.resize((height_img, width_img))
+        pixel_size_width = resolution_video_h # sensor_width_h / col.size[0]
+        pixel_size_height = resolution_video_v # sensor_width_v / col.size[1]
+        dimx, dimy = col.size[0], col.size[1]
+        bw_bodies = get_body(col.copy(), file_name, show=False)
+        radius_, point_list_ = get_type_radius(bw_bodies)
+        print(file_name, radius_)
+        img_cv2_ = cv2.cvtColor(np.asarray(col), cv2.COLOR_RGB2BGR)
+        for radii, pl, bw_temp in zip(radius_, point_list_, bw_bodies):
+            if len(pl[0]) > np.min([dimx, dimy]):
+                if np.max([dimx, dimy]) * 0.1 < radii[0] < np.max([dimx, dimy]) * 0.5 and radii[0] > 100 * radii[1]:
+                    print("sun")
+                    sun_edge_array, sun_points_center, sun_c, center_pixel = calc_sun_curvature(pl,
+                                                                                                focal_length,
+                                                                                                pixel_size_width,
+                                                                                                pixel_size_height,
+                                                                                                [col.size[0], col.size[1]],
+                                                                                                height)
+                    edge_, img_cv2_ = get_lines(col, center_pixel)
+                elif np.max([dimx, dimy]) * 100 >= radii[0] > np.max([dimx, dimy]) and radii[0] > 10 * radii[1]:
+                    print("earth")
+                    # Earth: Recalculate with hyperbolic geometry
+                    center_is_into = bool(bw_temp[int(bw_temp.shape[0] / 2), int(bw_temp.shape[1] / 2)])
+                    earth_edge_array, earth_points_center, earth_c, center_pixel, pitch_, roll_ = calc_hyperbola(pl,
+                                                                                                                 focal_length,
+                                                                                                                 pixel_size_width,
+                                                                                                                 pixel_size_height,
+                                                                                                                 height,
+                                                                                                                 [col.size[
+                                                                                                                      0],
+                                                                                                                  col.size[
+                                                                                                                      1]],
+                                                                                                                 center_is_into)
+                    col = np.asarray(col).copy()
+                    col = col[..., ::-1]
+                    col[earth_edge_array[:, 0], earth_edge_array[:, 1], :] = [0, 255, 0]
+                    im = Image.fromarray(col)
+                    draw = ImageDraw.Draw(im)
+                    draw.line((bw_temp.shape[1] / 2, bw_temp.shape[0] / 2, center_pixel[0], center_pixel[1]), fill='blue', width=2)
+                    edge_, img_cv2_ = None, np.asarray(im)
+    except:
+        edge_, img_cv2_ = [], None
+    return edge_, img_cv2_, pitch_, roll_
 
 
 if __name__ == '__main__':
     import pandas as pd
+    import cv2
+    from tools.get_video_frame import save_frame
 
-    PROJECT_FOLDER = "../data/M-20230824/20230824-att1-original/"
+    PROJECT_FOLDER = "../data/20230904/"
+    VIDEO_DATA = "20230904-video-att9-clip.mp4"
 
-    fourcc = cv2.VideoWriter_fourcc(*'MJPG')
-    video_salida = cv2.VideoWriter(PROJECT_FOLDER + "video_test.avi", fourcc, 10.0, (320, 180))
+    # save_frame(PROJECT_FOLDER, VIDEO_DATA)
+    NEW_FOLDER = PROJECT_FOLDER + VIDEO_DATA.split(".")[0] + '/'
+    img_type = 'png'
+    h_i, w_i = 80, 45
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    video_salida = cv2.VideoWriter(NEW_FOLDER + "video_test_x2.avi", fourcc, 10.0, (h_i, w_i))
 
-    list_file = [elem for elem in os.listdir(PROJECT_FOLDER) if 'png' in elem]
-    num_list = [int(elem.split(".")[0].replace("frame", "")) for elem in list_file if 'png' in elem]
+    list_file = [elem for elem in os.listdir(NEW_FOLDER) if img_type in elem]
+    num_list = [int(elem.split(".")[0].replace("frame", "")) for elem in list_file if img_type in elem]
     datalist = pd.DataFrame({'filename': list_file, 'id': num_list})
     datalist.sort_values(by='id', inplace=True)
-    height_sc = 480 #  km
-    for filename in datalist['filename'].values:
-        # col = Image.open(PROJECT_FOLDER + filename)
-        # edge_, img_cv2_ = get_lines(col, None)
-        edge_, img_cv2_ = get_vector(PROJECT_FOLDER + filename, height_sc)
-        # plt.figure()
-        # plt.imshow(img_cv2_)
-        # plt.figure()
-        # plt.imshow(edge_)
-        # plt.show()
+    height_sc = 440  # km
+    pitch_list = []
+    roll_list = []
+    k = 0
+    for filename in datalist['filename'].values[:]:
+        print(k)
+        edge_, img_cv2_, pitch_a, roll_a = get_vector(NEW_FOLDER + filename, height_sc, h_i, w_i)
+        pitch_list.append(pitch_a * np.rad2deg(1))
+        roll_list.append(roll_a * np.rad2deg(1))
+        k += 1
         video_salida.write(img_cv2_)
 
         # Liberar el objeto VideoWriter
     video_salida.release()
+
+    dt_ = 1/30
+    data = pd.DataFrame({'time(sec)': np.arange(0, len(pitch_list)) * dt_, 'pitch': pitch_list, 'roll': roll_list})
+    data.to_excel(NEW_FOLDER + 'pitch_roll.xlsx', index=False)
+
+    fig = plt.figure()
+    plt.ylabel("Angle rotation [deg]")
+    plt.plot(pitch_list, label='Pitch Angle')
+    plt.plot(roll_list, label='Roll Angle')
+    plt.grid()
+    plt.legend()
+    fig.savefig(NEW_FOLDER + "process/pitch_roll.png")
+
+    fig = plt.figure()
+    plt.ylabel("Angle rotation [deg]")
+
+    convolve_pitch = np.convolve([elem if elem >= 0 else elem + 360 for elem in pitch_list], np.ones(5), "valid") / 5
+
+    convolve_roll = np.convolve([elem if elem >= 0 else elem + 360 for elem in roll_list], np.ones(5), "valid") / 5
+
+    plt.plot(-np.diff(convolve_pitch) / dt_, label='Rate - Pitch Angle')
+    plt.plot(-np.diff(convolve_roll) / dt_, label='Rate - Roll Angle')
+    plt.grid()
+    plt.legend()
+    temp = VIDEO_DATA.split(".")[0]
+    fig.savefig(NEW_FOLDER + f"process/{temp}_rate_pitch_roll.png")
+    plt.show()

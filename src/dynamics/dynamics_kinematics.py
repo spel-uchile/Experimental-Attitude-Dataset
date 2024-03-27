@@ -6,7 +6,11 @@ email: els.obrq@gmail.com
 from sgp4.api import Satrec
 from sgp4.api import WGS84
 from tools.mathtools import *
+from astropy.coordinates import solar_system_ephemeris, EarthLocation, get_body
 import numpy as np
+from astropy.time import Time
+
+solar_system_ephemeris.set('jpl')
 
 RAD2DEG = 180 / np.pi
 DEG2RAD = 1 / RAD2DEG
@@ -19,6 +23,14 @@ geod_tolerance = 1e-10  # rad
 
 inertia = np.array([[38478.678, 0, 0], [0, 38528.678, 0], [0, 0, 6873.717]]) * 1e-6
 inv_inertia = np.linalg.inv(inertia)
+loc = EarthLocation(0, 0, 0)
+
+
+def calc_moon_pos_i(jd):
+    time = Time(jd, format='jd', scale='utc')
+    # time = Time(DATE)
+    moon_body = get_body('moon', time, loc)
+    return np.asarray(moon_body.cartesian.xyz) / 1000 # km
 
 
 def calc_sun_pos_i(jd):

@@ -110,3 +110,74 @@ class PSOStandard(PSO):
 
     def get_gains(self):
         return self.gbest_position
+
+
+class PSOMagCalibration(PSO):
+    def __init__(self, func, n_particles=100, n_steps=200, parameters=(0.8, 0.01, 1.2, 1.5)):
+        super().__init__(func, n_particles, n_steps, parameters)
+        self.evol_best_fitness = []
+        self.evol_p_fitness = []
+        self.gbest_position = []
+        self.historical_fitness = []
+        self.current_iteration = 0
+
+    def optimize(self, mag_sensor, mag_true, clip=True):
+        dw = (self.w2 - self.w1) / 500
+        W = np.max([self.w2 - dw * self.current_iteration, self.w1])
+
+        self.historical_position.append(self.position.copy())
+        fitness = np.array([self.fitness_function(pos, mag_sensor, mag_true) for pos in self.position])
+        self.historical_fitness.append(fitness)
+        self.pbest_position[fitness < self.pbest_fitness_value] = self.position[fitness < self.pbest_fitness_value]
+        self.pbest_fitness_value[fitness < self.pbest_fitness_value] = fitness[fitness < self.pbest_fitness_value]
+        best_particle_idx = np.argmin(fitness)
+        best_fitness = fitness[best_particle_idx]
+
+        # print("BEST: ", best_fitness, self.position[best_particle_idx])
+        if best_fitness < self.gbest_fitness_value:
+            self.gbest_fitness_value = best_fitness
+            self.gbest_position = self.position[best_particle_idx]
+
+        gbest = np.tile(self.gbest_position, (self.npar, 1))
+        r = np.random.uniform(size=2)
+        cognitive_comp = self.c1 * r[0] * (self.pbest_position - self.position)
+        social_comp = self.c2 * r[1] * (gbest - self.position)
+        self.velocity = W * self.velocity + cognitive_comp + social_comp
+        self.position = self.velocity + self.position
+        if clip:
+            self.position = np.clip(self.position, np.array(self.range_var)[:, 0], np.array(self.range_var)[:, 1])
+
+        self.evol_best_fitness.append(self.gbest_fitness_value)
+        self.evol_p_fitness.append(self.pbest_fitness_value)
+        self.historical_g_position.append(self.gbest_position)
+
+        print("Train: ", self.current_iteration, "Fitness: ", self.gbest_fitness_value, "Worst: ", max(self.pbest_fitness_value),
+              "Best:", self.gbest_position)
+        self.current_iteration += 1
+
+        return (self.historical_g_position[-1], self.historical_position, self.historical_g_position,
+                self.evol_p_fitness, self.evol_best_fitness)
+
+    def get_gains(self):
+        return self.gbest_position
+
+    @staticmethod
+    def get_full_D(d_vector):
+        d_ = np.zeros((3, 3))
+        d_[0, 0] = d_vector[0]
+        d_[1, 1] = d_vector[1]
+        d_[2, 2] = d_vector[2]
+
+        d_[0, 1] = d_vector[3]
+        d_[0, 2] = d_vector[4]
+        d_[1, 0] = d_vector[3]
+        d_[2, 0] = d_vector[4]
+
+        d_[1, 2] = d_vector[5]
+        d_[2, 1] = d_vector[5]
+        return d_
+
+    def get_calibration(self):
+        bias_ = self.gbest_position[:3]
+        d_ = self.get_full_D(self.gbest_position[3:9])
+        return bias_, d_

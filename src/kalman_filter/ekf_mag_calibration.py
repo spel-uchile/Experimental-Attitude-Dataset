@@ -7,8 +7,17 @@ email: els.obrq@gmail.com
 # B_k: measure, R_k: Reference, x_state = [bT, DT]
 import numpy as np
 import matplotlib.pyplot as plt
+from sklearn.metrics import mean_squared_error
 import seaborn as sns
 import pandas as pd
+from tools.pso import PSOMagCalibration
+from scipy.linalg import cholesky
+
+
+def pso_cost(x_est, mag_sensor_, mag_ref):
+    hk = error_measurement_model(mag_sensor_, x_est)
+    zk = np.linalg.norm(mag_sensor_) ** 2 - np.linalg.norm(mag_ref) ** 2
+    return (zk - hk) ** 2
 
 
 def error_measurement_model(mag_sensor_, x_est):
@@ -36,7 +45,7 @@ def sigma_2(x_est_, r_cov_sensor, B_k):
 
 class MagUKF():
     # Unscented Filter Formulation
-    def __init__(self, alpha=0.01, beta=2.0):
+    def __init__(self, alpha=0.1, beta=2.0):
         self.x_est = np.zeros(9)
 
         b_est_std = np.ones(3) * 50
@@ -70,7 +79,7 @@ class MagUKF():
         sigma_points = np.zeros((2 * self.n + 1, self.n))
         sigma_points[0] = x_est
         if method == 'SQUARE-ROOT':
-            uu_ = self.gamma * np.linalg.cholesky(self.pCov_x)
+            uu_ = cholesky((self.n + self.lamda) * self.pCov_x)
         else:
             uu_ = self.gamma * np.sqrt(self.pCov_x)
         for i in range(self.n):
@@ -100,7 +109,7 @@ class MagUKF():
         error_model_mean, error_y_direct = self.get_observation(sigma_points, sensor_)
         error_ = (error_measure - error_model_mean)
         self.historical['error'].append(error_)
-        print("ukf Error: ", error_)
+        # print("ukf Error: ", error_)
         sig2 = sigma_2(x_k, cov_sensor_, sensor_)
 
         p_xz = self.get_cross_correlation_matrix(sigma_points, x_k, error_model_mean, error_y_direct)
@@ -109,6 +118,7 @@ class MagUKF():
         # correction
         kk_ = np.dot(p_xz, p_zz_inv)
         self.x_est = x_k + kk_ @ np.atleast_1d(error_)
+        # self.x_est[3:] = np.maximum(self.x_est[3:], 0)
         self.pCov_x = p_cov_x - kk_ @ (p_zz + sig2) @ kk_.T
         # fill matrix with diagonal
         # self.pCov[:self.dim_x, :self.dim_x] = self.pCov_x
@@ -160,7 +170,7 @@ class MagUKF():
         d_ = get_full_D(self.x_est[3:9])
         return bias_, d_
 
-    def plot(self, new_sensor_error):
+    def plot(self, new_sensor_error, y_true):
         fig, axes = plt.subplots(3, 1)
         axes[0].grid()
         axes[0].set_title('Bias')
@@ -168,9 +178,9 @@ class MagUKF():
         axes[1].grid()
         axes[1].set_title('D scale')
         axes[1].plot(self.historical['scale'])
-        axes[2].grid()
         axes[2].set_title('Error - UKF')
         axes[2].plot(self.historical['error'])
+        axes[2].grid()
 
         plt.figure()
         plt.title("Covariance P")
@@ -179,10 +189,12 @@ class MagUKF():
         # bias and D legend
         plt.legend(["bx", "by", "bz", "Dxx", "Dyy", "Dzz", "Dxy", "Dxz", "Dyz"])
 
+        mse_ukf = mean_squared_error(y_true, new_sensor_error)
         plt.figure()
         plt.title("New sensor error - UKF")
         plt.grid()
-        plt.plot(new_sensor_error)
+        plt.plot(y_true - new_sensor_error, label='RMSE: {:2f}'.format(np.sqrt(mse_ukf)))
+        plt.legend()
 
 
 class MagEKF():
@@ -213,6 +225,7 @@ class MagEKF():
         print("new sigma", sigma_2_)
         kGain = self.update_error_K(p_k, jH, sigma_2_)
         self.x_est = self.update_error_x(current_x, kGain, error_, jH)
+        # self.x_est[3:] = np.maximum(self.x_est[3:], 0)
         self.pCov = self.update_error_P(p_k, jH, kGain)
 
     def get_calibration(self):
@@ -220,7 +233,7 @@ class MagEKF():
         d_ = get_full_D(self.x_est[3:])
         return bias_, d_
 
-    def plot(self, new_sensor_error):
+    def plot(self, new_sensor_error, y_true):
         fig, axes = plt.subplots(3, 1)
         axes[0].grid()
         axes[0].set_title('Bias')
@@ -239,10 +252,12 @@ class MagEKF():
         # bias and D legend
         plt.legend(["bx", "by", "bz", "Dxx", "Dyy", "Dzz", "Dxy", "Dxz", "Dyz"])
 
+        mse_ukf = mean_squared_error(y_true, new_sensor_error)
         plt.figure()
-        plt.title("New sensor error")
+        plt.title("New sensor error - EKF")
         plt.grid()
-        plt.plot(new_sensor_error)
+        plt.plot(y_true - new_sensor_error, label='RMSE: {:2f}'.format(np.sqrt(mse_ukf)))
+        plt.legend()
 
     @staticmethod
     def E_true(d):
@@ -357,54 +372,39 @@ def get_full_D(d_vector):
     return d_
 
 
+def create_example(b_true_, D_true_, std_measure_, time_array_):
+    mag_true_ = np.array([10 * np.sin(time_array_ * 0.001), -5 * np.cos(time_array_ * 0.025),
+                         20 * np.sin(time_array_ * 0.0025) * np.cos(time_array_ * 0.01)]).T
+    mag_true_ = np.multiply(mag_true_, 2 - time_array_.reshape(-1, 1) / tend)
+    eta_noise = np.random.normal(0, std_measure_, size=(len(mag_true_), 3))
+    mag_sensor_ = [np.linalg.inv(np.eye(3) + D_true_) @ (mag_true_ + eta_ + b_true_)
+                   for eta_, mag_true_ in zip(eta_noise, mag_true_)]
+    return mag_true_, np.array(mag_sensor_)
+
+
 if __name__ == '__main__':
     import scipy.io
     import matplotlib.pyplot as plt
 
     np.random.seed(42)
 
-    b_est = np.array([1, 2, 3]) * 1
-    D_est = np.array([1, 2, 3, 0.001, 0.002, 0.003])
+    b_est = np.array([1.1, 1.2, 1.3]) * 1
+    D_est = np.array([1.1, 1.2, 1.3, 0.001, 0.002, 0.003]) * 0.1
     #    D_est[3:] *= 1e-5
-    P_est = np.diag([*b_est, *D_est])  # (uT)^2
+    P_est = np.diag([*b_est, *D_est]) # (uT)^2
     # P_est = np.identity(9) * 1e-2
 
-    std_measure = 0.1  # uT
+    std_measure = 0.5  # uT
     step = 1  # s
     tend = 5400 * 2
     time_array = np.arange(0, tend, step)
 
     # trmm_data = scipy.io.loadmat('../../tools/trmm_data.mat')
-    mag_true = np.array([10 * np.sin(time_array * 0.005), -5 * np.cos(time_array * 0.025),
-                         20 * np.sin(time_array * 0.0025) * np.cos(time_array * 0.01)]).T
-    mag_true = np.multiply(mag_true, 2 - time_array.reshape(-1, 1) / tend)
-    b_true = np.array([-30, 2, 20])
-    D_true = np.array([[-0.5, 0.00, 0.00], [0.00, 0.1, 0.0], [0.0, 0.0, 0.5]])
-    eta_noise = np.random.normal(0, std_measure, size=(len(mag_true), 3))
-    mag_sensor = [np.linalg.inv(np.eye(3) + D_true) @ (mag_true_ + eta_ + b_true)
-                  for eta_, mag_true_ in zip(eta_noise, mag_true)]
-    sigma_scaled = np.linalg.inv(np.eye(3) + D_true) * std_measure
-    mag_sensor = np.array(mag_sensor)
 
-    z_norm = np.linalg.norm(mag_true, axis=1) ** 2 - np.linalg.norm(mag_sensor, axis=1) ** 2
-    v_norm = [2 * ((np.eye(3) + D_true) @ mag_sensor_ - b_true).T @ eta_ - np.linalg.norm(eta_, axis=0) ** 2
-              for eta_, mag_sensor_ in zip(eta_noise, mag_sensor)]
+    b_true = np.array([-350, 25, 250]) * 0.1
+    D_true = np.array([[1.5, 0.00, 0.0], [0.00, 1.1, 0.0], [0.0, 0.0, 2.5]]) * 0.1
+    mag_true, mag_sensor = create_example(b_true, D_true, std_measure, time_array)
 
-    plt.figure()
-    plt.title("Mag values")
-    plt.grid()
-    plt.plot(time_array, mag_true)
-    plt.plot(time_array, mag_sensor, '.')
-
-    plt.figure()
-    plt.title("Mag norm diff")
-    plt.grid()
-    plt.plot(time_array, z_norm)
-
-    plt.figure()
-    plt.title("v_norm")
-    plt.grid()
-    plt.plot(time_array, v_norm)
     # Calibration
 
     ct = step
@@ -415,12 +415,21 @@ if __name__ == '__main__':
 
     ekf_cal = MagEKF()
     ekf_cal.pCov = P_est
+    ekf_cal.x_est[:3] = np.array([100, 100, 100])
     ukf = MagUKF()
     ukf.pCov_x = P_est
-
+    ukf.x_est[:3] = np.array([-100, 100, 100])
+    pso_est = PSOMagCalibration(pso_cost, n_particles=50)
+    pso_est.initialize([[-50, 50],
+                        [-50, 50],
+                        [-50, 50],
+                        [-10, 10], [-10, 10], [-10, 10],
+                        [-1, 1], [-1, 1], [-1, 1]])
     new_sensor = []
     new_sensor_ukf = []
+    new_sensor_pso = []
     cov_sensor = std_measure ** 2
+
     for k in range(len(time_array)):
         # update state
         ekf_cal.save()
@@ -428,10 +437,15 @@ if __name__ == '__main__':
 
         ekf_cal.update_state(mag_sensor[k], mag_true[k], cov_sensor)
         ukf.run(mag_sensor[k], mag_true[k], cov_sensor)
+        # pso_est.optimize(mag_sensor[k], mag_true[k], clip=False)
+
         bias_, D_scale = ekf_cal.get_calibration()
         bias_ukf, D_scale_ukf = ukf.get_calibration()
+        # bias_pso, D_scale_pso = pso_est.get_calibration()
+
         new_sensor.append((np.eye(3) + D_scale) @ mag_sensor[k] - bias_)
         new_sensor_ukf.append((np.eye(3) + D_scale_ukf) @ mag_sensor[k] - bias_ukf)
+        # new_sensor_pso.append((np.eye(3) + D_scale_pso) @ mag_sensor[k] - bias_pso)
         print("RMS error:",
               np.dot(mag_true[k], new_sensor[-1]) / np.linalg.norm(mag_true[k]) / np.linalg.norm(new_sensor[-1]))
 

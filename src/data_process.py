@@ -12,6 +12,7 @@ import pandas as pd
 import numpy as np
 import datetime
 import json
+import os
 from sklearn.cluster import KMeans
 
 ts2022 = 1640995200 / 86400  # day
@@ -27,18 +28,25 @@ class RealData:
         self.data.sort_values(by=['timestamp'], inplace=True)
         self.data.dropna(inplace=True)
         self.data.reset_index(inplace=True)
-        self.data['acc_z'] = -91 * np.ones_like(self.data['acc_z'])
         self.data['jd'] = [timestamp_to_julian(float(ts)) for ts in self.data['timestamp'].values]
         self.data[['acc_x', 'acc_y', 'acc_z']] *= np.deg2rad(1)
 
     def create_datetime_from_timestamp(self, time_format):
-        self.data['DateTime'] = [datetime.datetime.fromtimestamp(ts).replace(tzinfo=datetime.timezone.utc).strftime(time_format)
+        self.data['DateTime'] = [datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc).strftime(time_format)
                                  for ts in self.data['timestamp']]
 
-    def plot_key(self, to_plot: list, show: bool = False):
+    def plot_key(self, to_plot: list, show: bool = False, **kwargs):
+        for key, value in kwargs.items():
+            print("%s == %s" % (key, value))
         plt.figure()
         plt.grid()
-        plt.plot(self.data['jd'], self.data[to_plot])
+        for i, elem in enumerate(to_plot):
+            dict_temp = {}
+            for key, value in kwargs.items():
+                dict_temp[key] = value[i]
+            plt.plot(self.data['jd'], self.data[elem], **dict_temp)
+        plt.xlabel('Julian Date')
+        plt.legend()
         plt.show() if show else None
 
     def search_nearly_tle(self):
@@ -54,34 +62,40 @@ class RealData:
         print(line1, line2)
         return line1, line2
 
+    def scale_mag(self, scale_):
+        self.data[['mag_x', 'mag_y', 'mag_z']] *= scale_
+
     def calibrate_mag(self, scale: np.array = None, bias: np.array = None, mag_i: np.array = None, by_file=False):
         if scale is not None and bias is not None:
             self.data[['mag_x', 'mag_y', 'mag_z']] = np.matmul(self.data[['mag_x', 'mag_y', 'mag_z']],
                                                                (np.eye(3) + scale)) - bias
         elif mag_i is not None:
-            x_non_sol, sig3_non, x_lin_sol, sig3_lin = two_step(
-                self.data[['mag_x', 'mag_y', 'mag_z']].values[:len(mag_i)], np.asarray(mag_i))
+            # if no exist file_name
+            file_name = self.folder_path + "calibration_" + self.file_name.split('.')[0] + ".json"
+            if os.path.exists(file_name):
+                with open(self.folder_path + "calibration_" + self.file_name.split('.')[0] + ".json") as data_file:
+                    data_loaded = json.load(data_file)
+                d = np.asarray(data_loaded['D'])
+                scale = np.diag(d[:3])
+                scale[0, 1] = d[3]
+                scale[1, 0] = d[3]
+                scale[0, 2] = d[4]
+                scale[2, 0] = d[4]
+                scale[1, 2] = d[5]
+                scale[2, 1] = d[5]
 
-            data = {'D': list(x_non_sol[3:]), 'bias': list(x_non_sol[:3])}
-            with open(self.folder_path + "calibration_" + self.file_name.split('.')[0] + ".json", 'w') as f:
-                json.dump(data, f)
-                f.close()
-            print(x_non_sol, sig3_non, x_lin_sol, sig3_lin)
-        elif by_file:
-            with open(self.folder_path + "calibration_" + self.file_name.split('.')[0] + ".json") as data_file:
-                data_loaded = json.load(data_file)
-            d = np.asarray(data_loaded['D'])
-            scale = np.diag(d[:3])
-            scale[0, 1] = d[3]
-            scale[1, 0] = d[3]
-            scale[0, 2] = d[4]
-            scale[2, 0] = d[4]
-            scale[1, 2] = d[5]
-            scale[2, 1] = d[5]
+                bias = np.asarray(data_loaded['bias'])
+                self.data[['mag_x', 'mag_y', 'mag_z']] = np.matmul(self.data[['mag_x', 'mag_y', 'mag_z']],
+                                                                   (np.eye(3) + scale)) - bias
+            else:
+                x_non_sol, sig3_non, x_lin_sol, sig3_lin = two_step(
+                    self.data[['mag_x', 'mag_y', 'mag_z']].values[:len(mag_i)], np.asarray(mag_i))
 
-            bias = np.asarray(data_loaded['bias'])
-            self.data[['mag_x', 'mag_y', 'mag_z']] = np.matmul(self.data[['mag_x', 'mag_y', 'mag_z']],
-                                                               (np.eye(3) + scale)) - bias
+                data = {'D': list(x_non_sol[3:]), 'bias': list(x_non_sol[:3])}
+                with open(file_name, 'w') as f:
+                    json.dump(data, f)
+                    f.close()
+                print(x_non_sol, sig3_non, x_lin_sol, sig3_lin)
 
     def set_window_time(self, start_str=None, stop_str=None, format_time=None):
         if start_str is None and stop_str is None and format_time is None:
@@ -149,4 +163,26 @@ def plot_dendrogram(model, **kwargs):
 
 
 if __name__ == '__main__':
-    pass
+    PROJECT_FOLDER = '../data/20230904/'
+    OBC_DATA = 'gyros-S3-040923.xlsx'
+    TIME_FORMAT = "%Y/%m/%d %H:%M:%S"
+    sensors = RealData(PROJECT_FOLDER, OBC_DATA)
+    sensors.create_datetime_from_timestamp(TIME_FORMAT)
+    sensors.plot_key(['mag_x', 'mag_y', 'mag_z'], color=('blue', 'orange', 'green'),
+                     label=('x [mG]', 'y [mG]', 'z [mG]'))
+    sensors.plot_key(['acc_x', 'acc_y', 'acc_z'], color=('blue', 'orange', 'green'),
+                     label=('x [deg/s]', 'y [deg/s]', 'z [deg/s]'))
+    sensors.plot_key(['mag_x'], color=['blue'], label=['x [mG]'])
+    sensors.plot_key(['mag_y'], color=['orange'], label=['y [mG]'])
+    sensors.plot_key(['mag_z'], color=['green'], label=['z [mG]'])
+    sensors.plot_key(['acc_x'], color=['blue'], label=['x [deg/s]'])
+    sensors.plot_key(['acc_y'], color=['orange'], label=['y [deg/s]'])
+    sensors.plot_key(['acc_z'], color=['green'], label=['z [deg/s]'])
+    sensors.plot_key(['sun3'], color=['blue'], label=['x [mA]'])
+    sensors.plot_key(['sun2'], color=['orange'], label=['y [mA]'])
+    sensors.plot_key(['sun4'], color=['green'], label=['z [mA]'])
+    sensors.plot_key(['sun3', 'sun2', 'sun4'], show=True, color=('blue', 'orange', 'green'),
+                     label=('-x [mA]', '-y [mA]', '-z [mA]'))
+
+
+

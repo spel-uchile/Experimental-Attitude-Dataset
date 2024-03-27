@@ -55,7 +55,7 @@ class Monitor:
             elif fft:
                 plt.stem(x, y * scale, label=y_dataset)
             else:
-                plt.plot(x, y * scale, label=y_dataset)
+                plt.plot(x, y * scale, label=y_dataset, lw=0.7)
         else:
             color = ['b', 'r']
             i = 0
@@ -64,11 +64,11 @@ class Monitor:
                 y = dataset[yset]
 
                 if step and fft is False:
-                    plt.step(x, y * scale, label=yset)
+                    plt.step(x, y * scale, label=yset, lw=0.7)
                 elif fft:
                     plt.stem(x, y * scale, color[i], label=yset)
                 else:
-                    plt.plot(x, y * scale, 'o-', label=yset)
+                    plt.plot(x, y * scale, 'o-', label=yset, lw=0.7)
                 i += 1
         plt.legend()
         plt.draw()
