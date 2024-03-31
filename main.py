@@ -28,7 +28,7 @@ from tools.monitor import Monitor
 import importlib.util
 
 # CONFIG
-PROJECT_FOLDER = "./data/20230904/"
+PROJECT_FOLDER = "./data/M-20230824/"
 module_name = "dataconfig"
 
 # Cargamos el módulo desde la ruta
@@ -154,18 +154,28 @@ if __name__ == '__main__':
     plt.grid()
 
     if ONLINE_MAG_CALIBRATION:
-        # sensors.scale_mag(100) # mG a nT
-        ukf = MagUKF()
-        D_est = np.zeros(6) + 1e-6
-        b_est = np.zeros(3) + 1e-2
+        ukf = MagUKF(alpha=10)
+        D_est = np.zeros(6) + 1e-4
+        b_est = np.zeros(3) + 100
         P_est = np.diag([*b_est, *D_est])  # (uT)^2
-        ukf.pCov = P_est
+        ukf.pCov_x = P_est
         new_sensor_ukf = []
+        stop_k = 0
+        flag_t = True
         for mag_i_, mag_b_ in zip(channels['mag_i'], sensors.data[['mag_x', 'mag_y', 'mag_z']].values):
             ukf.save()
-            ukf.run(mag_b_, mag_i_, 50)
+            if len(ukf.historical['error']) > 0:
+                if ukf.historical['error'][-1] > 5000 and flag_t:
+                    print(stop_k, ukf.historical['error'][-1])
+                    P_est = np.diag([*b_est, *D_est])  # (uT)^2
+                    ukf.pCov_x = P_est
+                    flag_t = False
+                else:
+                    flag_t = True
+            ukf.run(mag_b_, mag_i_, 200)
             bias_, D_scale = ukf.get_calibration()
             new_sensor_ukf.append((np.eye(3) + D_scale) @ mag_b_ - bias_)
+            stop_k += 1
         # ukf.plot(np.linalg.norm(np.asarray(new_sensor_ukf), axis=1), np.linalg.norm(mag_i, axis=1))
 
         # plot
@@ -182,6 +192,7 @@ if __name__ == '__main__':
 
         # mag_ukf = (np.eye(3) + D_ukf).dot(sensors.data[['mag_x', 'mag_y', 'mag_z']].values.T).T - b_ukf.reshape(-1, 1).T
         mag_ukf = np.asarray(new_sensor_ukf)
+        sensors.data[['mag_x', 'mag_y', 'mag_z']] = mag_ukf
         ukf.plot(np.linalg.norm(mag_ukf, axis=1), np.linalg.norm(channels['mag_i'], axis=1))
         plt.figure()
         plt.plot(mag_ukf[:, 0], label='new_mag_x')
@@ -195,6 +206,7 @@ if __name__ == '__main__':
         # plt.plot(channels['full_time'], channels['mag_i'][:, 1], label='mag_y')
         # plt.plot(channels['full_time'], channels['mag_i'][:, 2], label='mag_z')
         # plt.legend()
+        plt.show()
 
     omega_b = sensors.data[['acc_x', 'acc_y', 'acc_z']].values[0]
     q_i2b = Quaternions.get_from_two_v(channels['mag_i'][0], sensors.data[['mag_x', 'mag_y', 'mag_z']].values[0])()
@@ -203,10 +215,10 @@ if __name__ == '__main__':
 
     if EKF_SETUP == 'NORMAL':
         # MEKF
-        P = np.diag([0.5, 0.5, 0.5, 0.1, 0.1, 0.1]) * 1e-2
+        P = np.diag([0.5, 0.5, 0.5, 0.1, 0.1, 0.1]) * 1e-1
         ekf_model = MEKF(inertia, P=P, Q=np.zeros((6, 6)), R=np.zeros((3, 3)))
-        ekf_model.sigma_bias = 0.0001
-        ekf_model.sigma_omega = 0.0001
+        ekf_model.sigma_bias = 0.001
+        ekf_model.sigma_omega = 0.001
         ekf_model.current_bias = np.array([0.0, 0.0, 0])
     elif EKF_SETUP == 'FULL':
         # MEKF
@@ -222,7 +234,7 @@ if __name__ == '__main__':
     ekf_model.save_vector(name='sun_b_est', vector=Quaternions(q_i2b).frame_conv(channels['sun_sc_i'][0]))
 
     Imax = 930
-    pred_step_sec = 10
+    pred_step_sec = 60
 
     # ukf_model = UKF(P, dt=1)
     # ukf_model.set_quat(q_i2b, save=True)
@@ -264,14 +276,14 @@ if __name__ == '__main__':
         t0 = t_
         # ukf_model.predict()
         # mag
-        mag_est = ekf_model.inject_vector(body_vec_, mag_ref_, sigma2=100, sensor='mag')
+        mag_est = ekf_model.inject_vector(body_vec_, mag_ref_, sigma2=400, sensor='mag')
 
         # mag_est_ukf = ukf_model.inject_vector(body_vec_, mag_ref_, sigma2=5000, sensor='mag')
         # css
         css_est = np.zeros(3)
         is_dark = shadow_zone(channels['sat_pos_i'][k], channels['sun_i'][k])
-        if not is_dark and np.linalg.norm(css_3_) > 200:
-            css_est = ekf_model.inject_vector(css_3_, sun_sc_i_, gain=-Imax * np.eye(3), sigma2=30, sensor='css')
+        if not is_dark and np.linalg.norm(css_3_) > 400:
+            css_est = ekf_model.inject_vector(css_3_, sun_sc_i_, gain=-Imax * np.eye(3), sigma2=100, sensor='css')
         ekf_model.save_vector(name='css_est', vector=css_est)
         ekf_model.save_vector(name='mag_est', vector=mag_est)
         ekf_model.save_vector(name='sun_b_est', vector=Quaternions(ekf_model.current_quaternion).frame_conv(sun_sc_i_))
@@ -288,6 +300,12 @@ if __name__ == '__main__':
     error_mag = channels['mag_est'] - sensors.data[['mag_x', 'mag_y', 'mag_z']].values
     error_pred = [(Quaternions(Quaternions(q_p).conjugate()) * Quaternions(q_kf)).get_angle()
                   for q_p, q_kf in zip(channels['q_i2b_pred'], channels['q_est'][pred_step_sec:])]
+
+    q_est = np.array(channels['q_est'])
+
+    # q_train = q_est[:int(0.1 * len(q_est))]
+    # theta_r = np.arccos(q_train[:, 3]) * 2
+    # quat_vec = q_train[:, :3] / np.sin(theta_r * 0.5)
     plt.figure()
     plt.title("Error Mag")
     plt.plot(error_mag)
@@ -314,13 +332,15 @@ if __name__ == '__main__':
     axes[2].grid()
     axes[2].legend()
 
+    # channels['q_est'] = [np.array([0, 0, 0, 1]) for elem in channels['sat_pos_i']]
     monitor = Monitor(channels)
     monitor.set_position('sat_pos_i')
     monitor.set_quaternion('q_est')
     monitor.set_sideral('sideral')
 
-    monitor.add_vector('sun_i', color='yellow')
-    monitor.add_vector('mag_i', color='red')
+    monitor.add_vector('sun_sc_i', color='yellow')
+    monitor.add_vector('mag_i', color='orange')
+    monitor.add_vector('moon_sc_i', color='white')
 
     # monitor.plot(x_dataset='full_time', y_dataset='mag_i')
     # monitor.plot(x_dataset='full_time', y_dataset='lonlat')
@@ -341,4 +361,4 @@ if __name__ == '__main__':
         monitor.plot(x_dataset='full_time', y_dataset='ku')
         monitor.plot(x_dataset='full_time', y_dataset='kl')
     monitor.show_monitor()
-    monitor.plot3d()
+    # monitor.plot3d()

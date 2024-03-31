@@ -51,6 +51,7 @@ if __name__ == '__main__':
     from PIL import Image
     from tools.clustering import cluster, decrease_color
     import numpy as np
+    import pickle
 
     PROJECT_FOLDER = "../data/20230904/"
     VIDEO_DATA = "20230904-video-att9-original.mp4"
@@ -68,12 +69,14 @@ if __name__ == '__main__':
     datalist = pd.DataFrame({'filename': list_file, 'id': num_list})
     datalist.sort_values(by='id', inplace=True)
     k = 0
-    for filename in datalist['filename'].values[::red_fps]:
+    for filename in datalist['filename'].values[:1:red_fps]:
         print(k)
         col = Image.open(NEW_FOLDER + filename)
         # new_col, lighter_colors, counts = decrease_color(col, 5)
         # col.putdata([tuple(colors) for colors in new_col.reshape(-1, 3)])
-        gray = col.convert('L').resize((80, 45))
+        gray = col.convert('L')# .resize((80, 45))
+        # with open(NEW_FOLDER + "reduction_pickle.p", "wb") as fl:
+        #     pickle.dump(col, fl)
         k += 1
         video_salida.write(np.asarray(col.resize((180, 90))))
 

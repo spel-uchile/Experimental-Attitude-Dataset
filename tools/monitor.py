@@ -4,12 +4,12 @@ els.obrq@gmail.com
 Date: 04-12-2022
 """
 import time
-
 import matplotlib.pyplot as plt
 import numpy as np
 import pyvista as pv
 from pyquaternion import Quaternion as pyquat
 import pyvista
+import vtk
 
 
 class Monitor:
@@ -99,15 +99,15 @@ class Monitor3d:
     AUX_VECTOR = [pv.Arrow(np.zeros(3), direction=np.array([1, 0, 0]), scale=1),
                   pv.Arrow(np.zeros(3), direction=np.array([0, 1, 0]), scale=1),
                   pv.Arrow(np.zeros(3), direction=np.array([0, 0, 1]), scale=1)]
-    plotter3d = pv.Plotter()
-    vectors = {}
-    body_x_i = None
-    body_y_i = None
-    body_z_i = None
-    flag = False
-    view_worker = None
 
     def __init__(self, position, q_i2b, sideral):
+        self.plotter3d = pv.Plotter(shape=(1, 2))
+        self.vectors = {}
+        self.body_x_i = None
+        self.body_y_i = None
+        self.body_z_i = None
+        self.flag = False
+        self.view_worker = None
         self.last_index_ = 0
         self.last_pos = np.zeros(3)
         self.last_q_i2b = pyquat(np.array([1, 0, 0, 0]))
@@ -121,24 +121,35 @@ class Monitor3d:
         self.earth3d, texture = load_earth(radius=6378.137)
 
         self.sat_model = pv.PolyData("tools/cad/basic3U.stl")
+        self.plotter3d.subplot(0, 0)
+        self.plotter3d.set_background(color='gray')
         self.plotter3d.add_mesh(self.earth3d, texture=texture)  # , color='#0C007C')
         self.plotter3d.add_mesh(self.sat_model, color='white')
         self.plotter3d.add_points(np.array([elem for elem in self.sat_pos]), render_points_as_spheres=True,
-                                  point_size=3, color='black')
+                                  point_size=3, color='red')
         self.plotter3d.add_axes()
         self.add_eci_frame()
         self.add_body_frame()
 
         # reset earth
+        self.plotter3d.subplot(0, 1)
+        self.camera_rpi = pv.Camera()
+        self.plotter3d.set_background(color='gray')
+        self.plotter3d.add_mesh(self.earth3d, texture=texture)  # , color='#0C007C')
+        self.plotter3d.subplot(0, 1)
+        self.plotter3d.camera.position = self.sat_pos[0]
+        self.plotter3d.camera.up = (0, 0, 1)
+        self.plotter3d.camera.focal_point = (0, 1, 0)
+        self.plotter3d.camera.view_angle = 48.8
+        self._last_focal = (0, 1, 0)
+
+        self.plotter3d.subplot(0, 0)
         self.earth3d.rotate_z(180, inplace=True)
-
-        self.update(0)
-
         self.plotter3d.add_slider_widget(self.update, [0, len(self.sat_pos) - 1], value=0, title='Step')
-        # self.btn = self.plotter3d.add_checkbox_button_widget(self.forward, value=True)
+        self.btn = self.plotter3d.add_checkbox_button_widget(self.forward, value=False)
 
     def update_windows(self):
-        while self.flag and self.last_index_ < len(self.sat_pos) - 1:
+        if self.flag and self.last_index_ < len(self.sat_pos) - 1:
             self.update(self.last_index_)
             time.sleep(1)
             self.last_index_ += 1
@@ -146,20 +157,18 @@ class Monitor3d:
     def add_vectors(self, vectors_list):
         for key, item in vectors_list.items():
             data, color = item['data'], item['color']
-            if 'mag' in key:
-                relative_to_sc = data[0]
-            else:
-                relative_to_sc = data[0] - self.sat_pos[0]
-
+            relative_to_sc = data[0]
             relative_to_sc /= np.linalg.norm(relative_to_sc)
             self.vectors[key] = {}
             self.vectors[key]['data'] = data
             self.vectors[key]['model'] = pv.Arrow(self.sat_pos[0], direction=relative_to_sc,
                                                   scale=200)
+            self.plotter3d.subplot(0, 0)
             self.plotter3d.add_mesh(self.vectors[key]['model'], color=color, reset_camera=False)
 
     def add_body_frame(self):
         center_ref = np.zeros(3)
+        self.plotter3d.subplot(0, 0)
         self.body_x_i = pv.Arrow(center_ref, [1, 0, 0], scale=200)
         self.body_y_i = pv.Arrow(center_ref, [0, 1, 0], scale=200)
         self.body_z_i = pv.Arrow(center_ref, [0, 0, 1], scale=200)
@@ -167,9 +176,19 @@ class Monitor3d:
         self.plotter3d.add_mesh(self.body_y_i, color='green', lighting=False)
         self.plotter3d.add_mesh(self.body_z_i, color='blue', lighting=False)
 
+    def forward(self, flag):
+        while flag:
+            if self.last_index_ < len(self.sat_pos) - 1:
+                print(self.last_index_ + 1)
+                self.update(self.last_index_ + 1)
+                time.sleep(0.1)
+            else:
+                self.last_index_ = 0
+
     def update(self, index_):
         index_ = int(index_)
         # position
+        # TODO: arreglar ref de camera
         sc_pos_i = self.sat_pos[index_]
         relative_pos = sc_pos_i - self.last_pos
         self.sat_model.translate(relative_pos, inplace=True)
@@ -193,6 +212,18 @@ class Monitor3d:
                                     angle=d_quaternion.angle * np.rad2deg(1),
                                     point=sc_pos_i, inplace=True)
 
+        fv = self._last_focal
+        dir_vec = (np.mean(self.body_y_i.points, axis=0) - sc_pos_i)
+        dir_vec = np.asarray(dir_vec)
+        dir_vec /= np.linalg.norm(dir_vec)
+        print(dir_vec, d_quaternion.rotate(np.asarray(fv)))
+        self._last_focal = dir_vec
+        self.camera_rpi.focal_point = dir_vec
+        self.plotter3d.subplot(0, 1)
+        self.plotter3d.camera.focal_point = dir_vec
+        self.plotter3d.camera.position += relative_pos
+        self.plotter3d.camera.up = (0, 0, 1)
+        self.plotter3d.camera.view_angle = 48.8
         # earth
         sideral = self.earth_sideral[index_]
         self.earth3d.rotate_z((sideral - self.last_sideral) * np.rad2deg(1), inplace=True)
@@ -215,7 +246,9 @@ class Monitor3d:
             ang_rot = np.arccos(np.dot(last_vect_pos, vect_pos) / (en * ln))
             arrow['model'].translate(relative_pos, inplace=True)
             arrow['model'].rotate_vector(vector=rot_vec, angle=np.rad2deg(ang_rot), point=sc_pos_i, inplace=True)
-
+        self.plotter3d.render()
+        self.plotter3d.subplot(0, 0)
+        self.plotter3d.render()
         self.last_sideral = sideral
         self.last_pos = sc_pos_i
         self.last_q_i2b = quaternion_tn
@@ -223,6 +256,7 @@ class Monitor3d:
 
     def add_eci_frame(self):
         scale = 1e-3
+        self.plotter3d.subplot(0, 0)
         self.plotter3d.add_lines(np.array([[0, 0, 0], [1e7 * scale, 0, 0]]), color=[255, 0, 0], width=2,
                                  label='X-axis')
         self.plotter3d.add_lines(np.array([[0, 0, 0], [0, 1e7 * scale, 0]]), color=[0, 255, 0], width=2,

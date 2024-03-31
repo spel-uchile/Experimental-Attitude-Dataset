@@ -438,6 +438,7 @@ def get_vector(file_name, height, height_img=None, width_img=None):
 if __name__ == '__main__':
     import pandas as pd
     import cv2
+    import pickle
     from tools.get_video_frame import save_frame
 
     PROJECT_FOLDER = "../data/20230904/"
@@ -458,7 +459,7 @@ if __name__ == '__main__':
     pitch_list = []
     roll_list = []
     k = 0
-    for filename in datalist['filename'].values[:]:
+    for filename in datalist['filename'].values[:1]:
         print(k)
         edge_, img_cv2_, pitch_a, roll_a = get_vector(NEW_FOLDER + filename, height_sc, h_i, w_i)
         pitch_list.append(pitch_a * np.rad2deg(1))

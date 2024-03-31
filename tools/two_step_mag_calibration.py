@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 
 def two_step(bm_, ar_):
     # Monte Carlo Runs
-    num_mc = 15000
+    num_mc = 5000
     m = len(ar_)
     i100 = 0
     x_lin = np.zeros((num_mc, 9))
