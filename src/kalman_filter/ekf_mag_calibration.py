@@ -57,6 +57,8 @@ class MagUKF():
         self.full_dim = self.dim_x + self.dim_v + self.dim_n
         self.pCov_x = np.diag([*b_est_std, *d_est_std])  # state covariance
         self.flag = False
+        self.pCov_zero = self.pCov_x.copy() * 0.5
+        self.fisher_matrix = np.diag([*b_est_std, *d_est_std])
         # self.pCov_v = np.diag(np.zeros(0))  # process covariance
         # self.pCov_n = np.diag(np.zeros(0))  # measurement covariance
         # fill matrix with diagonal
@@ -65,12 +67,12 @@ class MagUKF():
         # self.pCov[:self.dim_x, :self.dim_x] = self.pCov_x
         # self.pCov[self.dim_x:self.dim_x + self.dim_v, self.dim_x:self.dim_x + self.dim_v] = self.pCov_v
         # self.pCov[self.dim_x + self.dim_v:self.full_dim, self.dim_x + self.dim_v:self.full_dim] = self.pCov_n
-        self.historical = {'bias': [], 'scale': [], 'error': [], 'P': []}
+        self.historical = {'bias': [], 'scale': [], 'error': [], 'P': [], 'eigP': []}
 
         self.alpha = alpha
         self.beta = beta
         self.n = self.x_est.size
-        self.kappa = 5.0 - self.n
+        self.kappa = 3.0 - self.n
         self.lamda = self.alpha ** 2 * (self.n + self.kappa) - self.n
         self.gamma = np.sqrt(self.n + self.lamda)
         self.weights_mean, self.weights_cov = self.get_weights()
@@ -81,11 +83,7 @@ class MagUKF():
         # sigma_points_sigma2 = np.zeros((2 * self.n, self.n))
         sigma_points[0] = x_est
         if method == 'SQUARE-ROOT':
-            try:
-                uu_ = cholesky((self.n + self.lamda) * self.pCov_x)
-            except np.linalg.LinAlgError as error:
-                print(error)
-                uu_ = self.gamma * np.sqrt(self.pCov_x)
+            uu_ = cholesky((self.n + self.lamda) * self.pCov_x)
         else:
             uu_ = self.gamma * np.sqrt(self.pCov_x)
         for i in range(self.n):
@@ -100,8 +98,17 @@ class MagUKF():
         self.historical['bias'].append(current_x[:3])
         self.historical['scale'].append(current_x[3:])
         self.historical['P'].append(np.diag(self.pCov_x.copy()))
+        self.historical['eigP'].append(np.sqrt(np.linalg.eigvals(self.pCov_x)))
 
-    def run(self, sensor_, reference_, cov_sensor_):
+    def run(self, sensor_, reference_, cov_sensor_, error_up=None, error_down=None):
+        # if error_up is not None and error_down is not None:
+        #     if len(self.historical['error']) > 0:
+        #         if abs(self.historical['error'][-1]) > error_up and not self.flag:
+        #             self.pCov_x = self.pCov_zero
+        #             self.flag = True
+        #         else:#if abs(self.historical['error'][-1]) <= error_down and self.flag:
+        #             self.flag = False
+
         current_x = self.x_est.copy()
 
         self.lamda = self.alpha ** 2 * (self.n + self.kappa) - self.n
@@ -122,7 +129,7 @@ class MagUKF():
         error_measure = np.linalg.norm(sensor_) ** 2 - np.linalg.norm(reference_) ** 2
         error_model_mean, error_y_direct = self.get_observation(sigma_points, sensor_)
         error_ = (error_measure - error_model_mean)
-        # print("ukf Error: ", error_)
+        print("ukf Error: ", error_)
         sig2 = sigma_2(x_k, cov_sensor_, sensor_)
 
         p_xz = self.get_cross_correlation_matrix(sigma_points, x_k, error_model_mean, error_y_direct)
@@ -130,21 +137,24 @@ class MagUKF():
         p_zz_inv = np.linalg.inv(p_zz + sig2)
         # correction
         kk_ = np.dot(p_xz, p_zz_inv)
-        self.corr = kk_ @ np.atleast_1d(error_)
+        # self.corr = kk_ @ np.atleast_1d(error_)
         self.x_est = x_k + kk_ @ np.atleast_1d(error_)
         # self.x_est[3:] = np.maximum(self.x_est[3:], 0)
         self.pCov_x = p_cov_x - kk_ @ (p_zz + sig2) @ kk_.T
+        if len(self.historical['error']) > 0 and error_up is not None and error_down is not None:
+            if abs(error_) > error_up and not self.flag:
+                # self.pCov_x[:3, :3] = self.pCov_zero[:3, :3]
+                self.pCov_x = self.pCov_zero
 
+                self.flag = True
+                print("After:", error_)
+            elif abs(error_) <= error_down and self.flag:
+                self.flag = False
+                print("low:", error_)
         # if len(self.historical['error']) > 1:
-        #     if abs(error_) > 30 and not self.flag:
-        #         self.pCov_x *= np.abs(error_ / self.historical['error'][-1])
-        #         self.flag = True
-        #     elif abs(error_) <= 10 and self.flag:
-        #         self.flag = False
-        if len(self.historical['error']) > 1:
-            self.alpha *= np.abs(error_ / self.historical['error'][-1]) ** 2
-            self.alpha = min(max(self.alpha, 1), 40)
-            print(self.alpha)
+        #     self.alpha *= np.abs(error_ / self.historical['error'][-1]) ** 2
+        #     self.alpha = min(max(self.alpha, 1), 40)
+        #     print(self.alpha)
         self.historical['error'].append(error_)
         # fill matrix with diagonal
         # self.pCov[:self.dim_x, :self.dim_x] = self.pCov_x
@@ -196,6 +206,11 @@ class MagUKF():
                 pxz += self.weights_cov[i] * np.outer(dx, dz)
         return pxz
 
+    def get_bias(self):
+        bias_ = np.array(self.historical['bias'])
+        sigma_ = np.array(self.historical['eigP'])[:, :3]
+        return bias_, bias_ + sigma_ * 3, bias_ - sigma_ * 3
+
     def get_output_covariance(self, sigma_points, x_k_, z_k, sigma_z, sigma_points_sigma2=None):
         kmax, n = sigma_z.shape
         pzz = np.zeros((n, n))
@@ -210,6 +225,7 @@ class MagUKF():
         return bias_, d_
 
     def plot(self, new_sensor_error, y_true):
+        val = np.linalg.eigvals(self.pCov_x)
         fig, axes = plt.subplots(3, 1)
         fig.suptitle('UKF')
         axes[0].grid()
@@ -226,6 +242,7 @@ class MagUKF():
         plt.title("Covariance P - UKF")
         plt.grid()
         plt.plot(self.historical['P'])
+        plt.xlabel("Step")
         # bias and D legend
         plt.legend(["bx", "by", "bz", "Dxx", "Dyy", "Dzz", "Dxy", "Dxz", "Dyz"])
 
@@ -233,6 +250,7 @@ class MagUKF():
         plt.figure()
         plt.title("Magnitude Sensor error - UKF")
         plt.grid()
+        plt.xlabel("Step")
         plt.plot(y_true - new_sensor_error, label='RMSE: {:2f}'.format(np.sqrt(mse_ukf)))
         plt.legend()
 
@@ -243,13 +261,14 @@ class MagEKF():
         b_est_std = np.ones(3) * 50
         d_est_std = np.ones(6) * 1e-2
         self.pCov = np.diag([*b_est_std, *d_est_std])  # (uT)^2
-        self.historical = {'bias': [], 'scale': [], 'error': [], 'P': []}
+        self.historical = {'bias': [], 'scale': [], 'error': [], 'P': [], 'eigP': []}
 
     def save(self):
         current_x = self.x_est.copy()
         self.historical['bias'].append(current_x[:3])
         self.historical['scale'].append(current_x[3:])
         self.historical['P'].append(np.diag(self.pCov.copy()))
+        self.historical['eigP'].append(np.sqrt(np.linalg.eigvals(self.pCov)))
 
     def run(self, mag_measure, mag_reference, cov_sensor_):
         current_x = self.x_est.copy()
@@ -259,7 +278,7 @@ class MagEKF():
         error_model = error_measurement_model(mag_measure, current_x)
         error_ = (error_measure - error_model)
         self.historical['error'].append(error_)
-        # print("ekf Error: ", error_)
+        print("ekf Error: ", error_)
         jH = self.sensitivity_matrix_H(current_x, mag_measure)
         sigma_2_ = sigma_2(current_x, cov_sensor_, mag_measure)
         # print("new sigma", sigma_2_)
@@ -282,6 +301,7 @@ class MagEKF():
         axes[0].grid()
         axes[0].set_title('Bias')
         axes[0].plot(self.historical['bias'])
+        axes[0].plot()
         axes[1].grid()
         axes[1].set_title('D scale')
         axes[1].plot(self.historical['scale'])
@@ -292,6 +312,7 @@ class MagEKF():
         plt.figure()
         plt.title("Covariance P - EKF")
         plt.grid()
+        plt.xlabel("Step")
         plt.plot(self.historical['P'])
         # bias and D legend
         plt.legend(["bx", "by", "bz", "Dxx", "Dyy", "Dzz", "Dxy", "Dxz", "Dyz"])
@@ -299,9 +320,15 @@ class MagEKF():
         mse_ukf = mean_squared_error(y_true, new_sensor_error)
         plt.figure()
         plt.title("Magnitude Sensor error - EKF")
+        plt.xlabel("Step")
         plt.grid()
         plt.plot(y_true - new_sensor_error, label='RMSE: {:2f}'.format(np.sqrt(mse_ukf)))
         plt.legend()
+
+    def get_bias(self):
+        bias_ = np.array(self.historical['bias'])
+        sigma_ = np.array(self.historical['eigP'])[:, :3]
+        return bias_, bias_ + sigma_ * 3, bias_ - sigma_ * 3
 
     @staticmethod
     def E_true(d):
@@ -432,7 +459,7 @@ if __name__ == '__main__':
 
     np.random.seed(42)
 
-    b_est = np.array([1.1, 1.2, 1.3]) * 200
+    b_est = np.array([1, 1, 1]) * 100
     D_est = np.array([1.1, 1.2, 1.3, 0.001, 0.002, 0.003]) * 1e-7
     #    D_est[3:] *= 1e-5
     P_est = np.diag([*b_est, *D_est]) # (uT)^2
@@ -440,15 +467,17 @@ if __name__ == '__main__':
 
     std_measure = 0.5  # uT
     step = 1  # s
-    tend = 5400
+    tend = 5400 * 1
+
     time_array = np.arange(0, tend, step)
 
     # trmm_data = scipy.io.loadmat('../../tools/trmm_data.mat')
 
     # b_true = [np.array([-50, 25, 10])] * len(time_array)
-    b_true = [
-        np.array([-50, 25, 10]) * np.min([(t_ - tend * 0.3) / 1000, 1]) if t_ >= tend * 0.3 else np.array([-5.0, 2.5, 1.]) for
-        t_ in time_array]
+    b_true = [np.array([-5.0, 2.5, 1.]) +
+              10 * np.array([-5.0, 2.5, 1.]) * np.min([(t_ - tend * 0.3) / 1000, 1]) if t_ >= tend * 0.3 else np.array([-5.0, 2.5, 1.]) for
+              t_ in time_array]
+    b_true = np.array(b_true)
     D_true = np.array([[1.5, 0.00, 0.0], [0.00, 1.1, 0.0], [0.0, 0.0, 2.5]]) * 0.01
 
     mag_true, mag_sensor = create_example(b_true, D_true, std_measure, time_array)
@@ -468,8 +497,6 @@ if __name__ == '__main__':
     plt.xlabel("Time")
     plt.grid()
     plt.legend(["x", "y", "z"])
-    plt.show()
-
     # Calibration
 
     ct = step
@@ -479,11 +506,10 @@ if __name__ == '__main__':
     P_k = P_est
 
     ekf_cal = MagEKF()
-    ekf_cal.pCov = P_est
-    ekf_cal.x_est[:3] = np.array([0, 0, 0])
-    ukf = MagUKF(alpha=10, beta=2)
-    ukf.pCov_x = P_est
-    ukf.x_est[:3] = np.array([-0, 0, 0])
+    ekf_cal.pCov = P_est.copy()
+    ukf = MagUKF(alpha=1, beta=2)
+    ukf.pCov_x = P_est.copy()
+    ukf.pCov_zero = P_est.copy()
     pso_est = PSOMagCalibration(pso_cost, n_particles=50)
     pso_est.initialize([[-50, 50],
                         [-50, 50],
@@ -501,7 +527,7 @@ if __name__ == '__main__':
         ukf.save()
 
         ekf_cal.run(mag_sensor[k], mag_true[k], cov_sensor)
-        ukf.run(mag_sensor[k], mag_true[k], cov_sensor)
+        ukf.run(mag_sensor[k], mag_true[k], cov_sensor, 150, 100)
         # pso_est.optimize(mag_sensor[k], mag_true[k], clip=False)
 
         bias_, D_scale = ekf_cal.get_calibration()
@@ -517,21 +543,21 @@ if __name__ == '__main__':
     ekf_cal.plot(np.linalg.norm(np.asarray(new_sensor), axis=1), np.linalg.norm(mag_true, axis=1))
     ukf.plot(np.linalg.norm(np.asarray(new_sensor_ukf), axis=1), np.linalg.norm(mag_true, axis=1))
 
-    D_ekf_vector = ekf_cal.historical['scale'][-1]
-    b_ekf = ekf_cal.historical['bias'][-1]
-    D_ukf_vector = ukf.historical['scale'][-1]
-    b_ukf = ukf.historical['bias'][-1]
-    print(b_ekf, D_ekf_vector)
-    print(b_ukf, D_ukf_vector)
-    D_ekf = np.array([[D_ekf_vector[0], D_ekf_vector[3], D_ekf_vector[4]],
-                      [D_ekf_vector[3], D_ekf_vector[1], D_ekf_vector[5]],
-                      [D_ekf_vector[4], D_ekf_vector[5], D_ekf_vector[2]]])
-    D_ukf = np.array([[D_ukf_vector[0], D_ukf_vector[3], D_ukf_vector[4]],
-                      [D_ukf_vector[3], D_ukf_vector[1], D_ukf_vector[5]],
-                      [D_ukf_vector[4], D_ukf_vector[5], D_ukf_vector[2]]])
+    # D_ekf_vector = ekf_cal.historical['scale'][-1]
+    # b_ekf = ekf_cal.historical['bias'][-1]
+    # D_ukf_vector = ukf.historical['scale'][-1]
+    # b_ukf = ukf.historical['bias'][-1]
+    # print(b_ekf, D_ekf_vector)
+    # print(b_ukf, D_ukf_vector)
+    # D_ekf = np.array([[D_ekf_vector[0], D_ekf_vector[3], D_ekf_vector[4]],
+    #                   [D_ekf_vector[3], D_ekf_vector[1], D_ekf_vector[5]],
+    #                   [D_ekf_vector[4], D_ekf_vector[5], D_ekf_vector[2]]])
+    # D_ukf = np.array([[D_ukf_vector[0], D_ukf_vector[3], D_ukf_vector[4]],
+    #                   [D_ukf_vector[3], D_ukf_vector[1], D_ukf_vector[5]],
+    #                   [D_ukf_vector[4], D_ukf_vector[5], D_ukf_vector[2]]])
 
-    mag_ekf = np.asarray(new_sensor)#(np.eye(3) + D_ekf).dot(mag_sensor.T).T - b_ekf.reshape(-1, 1).T
-    mag_ukf = np.asarray(new_sensor_ukf)#(np.eye(3) + D_ukf).dot(mag_sensor.T).T - b_ukf.reshape(-1, 1).T
+    mag_ekf = np.asarray(new_sensor)    # (np.eye(3) + D_ekf).dot(mag_sensor.T).T - b_ekf.reshape(-1, 1).T
+    mag_ukf = np.asarray(new_sensor_ukf)    # (np.eye(3) + D_ukf).dot(mag_sensor.T).T - b_ukf.reshape(-1, 1).T
 
     dic_ekf_x = pd.DataFrame({'Error': (mag_ekf - mag_true)[:, 0], 'Filters': ['EKF'] * len(mag_ekf),
                               'Axis': ['x'] * len(mag_ekf)})
@@ -550,13 +576,20 @@ if __name__ == '__main__':
     #
     result = pd.concat([dic_ekf_x, dic_ekf_y, dic_ekf_z, dic_ukf_x, dic_ukf_y, dic_ukf_z], ignore_index=True)
 
-    fig, ax = plt.subplots()
-    # ax.set_color_cycle(['blue', 'red', 'green'])
-    ax.set_title("Bias - EKF")
-    ax.grid()
-    ax.plot(time_array, ekf_cal.historical['bias'])
-    ax.plot(time_array, b_true, linestyle="--", color='black')
-    ax.set_xlabel("Time")
+    fig, ax = plt.subplots(3, 1, sharex=True)
+    bias, sigma_up, sigma_low = ekf_cal.get_bias()
+    ax[0].set_title("Bias - EKF")
+    for i in range(3):
+        ax[i].grid()
+        ax[i].plot(time_array, bias[:, i], label='Estimated bias')
+        ax[i].plot(time_array, sigma_up[:, i], color='red', linestyle='--', label=r'$+3\sigma$')
+        ax[i].plot(time_array, sigma_low[:, i], color='red', linestyle='--', label=r'$-3\sigma$')
+        ax[i].plot(time_array, b_true[:, i], linestyle="--", color='black', label='True')
+        if i==0:
+            ax[i].legend(loc='upper center', bbox_to_anchor=(0.5, 1.05),
+                         fancybox=True, shadow=True, ncol=4)
+    ax[i].set_xlabel("Time")
+
     plt.figure()
     plt.title("D - EKF")
     plt.grid()
@@ -574,16 +607,22 @@ if __name__ == '__main__':
         ax_est_ekf[i].plot(time_array, mag_true[:, i], color='black', lw=0.7, label='true')
         ax_est_ekf[i].plot(time_array, mag_ekf[:, i], color='red', lw=0.7, label='est')
         ax_est_ekf[i].legend()
-        ax_est_ekf[i].set_xlabel("Time")
+    ax_est_ekf[i].set_xlabel("Time")
 
     # UKF
-    fig, ax = plt.subplots()
-    # ax.set_color_cycle(['blue', 'red', 'green'])
-    ax.set_title("Bias - UKF")
-    ax.grid()
-    ax.plot(time_array, ukf.historical['bias'])
-    ax.plot(time_array, b_true, linestyle="--", color='black')
-    ax.set_xlabel("Time")
+    fig, ax = plt.subplots(3, 1, sharex=True)
+    bias, sigma_up, sigma_low = ukf.get_bias()
+    ax[0].set_title("Bias - UKF")
+    for i in range(3):
+        ax[i].grid()
+        ax[i].plot(time_array, bias[:, i], label='Estimated bias')
+        ax[i].plot(time_array, sigma_up[:, i], color='red', linestyle='--', label=r'$+3\sigma$')
+        ax[i].plot(time_array, sigma_low[:, i], color='red', linestyle='--', label=r'$-3\sigma$')
+        ax[i].plot(time_array, b_true[:, i], linestyle="--", color='black', label='True')
+        if i==0:
+            ax[i].legend(loc='upper center', bbox_to_anchor=(0.5, 1.05),
+                         fancybox=True, shadow=True, ncol=4)
+    ax[i].set_xlabel("Time")
 
     plt.figure()
     plt.title("D - UKF")
@@ -602,7 +641,7 @@ if __name__ == '__main__':
         ax_est_ukf[i].plot(time_array, mag_true[:, i], color='black', lw=0.7, label='true')
         ax_est_ukf[i].plot(time_array, mag_ukf[:, i], color='red', lw=0.7, label='est')
         ax_est_ukf[i].legend()
-        ax_est_ukf[i].set_xlabel("Time")
+    ax_est_ukf[i].set_xlabel("Time")
     plt.legend()
 
     plt.figure()

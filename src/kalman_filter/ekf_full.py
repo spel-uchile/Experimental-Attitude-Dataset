@@ -20,9 +20,8 @@ class MEKF_FULL(EKF):
     def __init__(self, inertia, R, Q, P):
         super().__init__(inertia, R, Q, P)
         self.current_measure = np.zeros(3)
-        self.omega_m = np.zeros(3)
         self.current_quaternion = np.zeros(4)
-
+        self.omega_state = np.zeros(3)
         self.theta_error = np.zeros(3)
         self.current_bias = np.zeros(3)
         self.scale = np.zeros(3)
@@ -32,14 +31,15 @@ class MEKF_FULL(EKF):
 
         self.historical = {'q_est': [], 'b_est': [np.zeros(3)], 'mag_est': [], 'omega_est': [],
                            'scale': [np.zeros(3)], 'ku': [np.zeros(3)], 'kl': [np.zeros(3)],
-                           'p_cov': [self.covariance_P.flatten()]}
+                           'p_cov': [np.diag(self.covariance_P)], 'css_est': [], 'sun_b_est': [],
+                           'eigP': [np.sqrt(np.linalg.eigvals(self.covariance_P))]}
 
     def set_gyro_measure(self, value):
-        self.omega_m = value
+        self.omega_state = value
         self.historical['omega_est'].append(self.get_calibrate_omega())
 
     def get_calibrate_omega(self):
-        return (np.eye(3) - self.get_scale()) @ (self.omega_m - self.current_bias)
+        return (np.eye(3) - self.get_scale()) @ (self.omega_state - self.current_bias)
 
     def set_quat(self, value, save=False):
         value = value / np.linalg.norm(value)
@@ -58,7 +58,7 @@ class MEKF_FULL(EKF):
         f_x = np.zeros((15, 15))
         f_x[:3, :3] = -skew(omega)
         f_x[:3, 3:6] = -(np.identity(3) - self.get_scale())
-        f_x[:3, 6:9] = -np.diag(self.omega_m - self.current_bias)
+        f_x[:3, 6:9] = -np.diag(self.omega_state - self.current_bias)
         f_x[:3, 9:12] = -self.get_u()
         f_x[:3, 12:] = -self.get_l()
         g_x = np.eye(15)
@@ -76,7 +76,7 @@ class MEKF_FULL(EKF):
         f_x = np.zeros((15, 15))
         f_x[:3, :3] = -skew(omega)
         f_x[:3, 3:6] = -(np.identity(3) - self.get_scale())
-        f_x[:3, 6:9] = -np.diag(self.omega_m - self.current_bias)
+        f_x[:3, 6:9] = -np.diag(self.omega_state - self.current_bias)
         f_x[:3, 9:12] = -self.get_u()
         f_x[:3, 12:] = -self.get_l()
 
@@ -92,7 +92,7 @@ class MEKF_FULL(EKF):
         return new_p_k
 
     def get_u(self):
-        temp = self.omega_m - self.current_bias
+        temp = self.omega_state - self.current_bias
         u_ = np.zeros((3, 3))
         u_[0, 0] = temp[1]
         u_[0, 1] = temp[2]
@@ -100,7 +100,7 @@ class MEKF_FULL(EKF):
         return u_
 
     def get_l(self):
-        temp = self.omega_m - self.current_bias
+        temp = self.omega_state - self.current_bias
         l_ = np.zeros((3, 3))
         l_[1, 0] = temp[0]
         l_[2, 1] = temp[0]
@@ -130,10 +130,14 @@ class MEKF_FULL(EKF):
         new_q /= np.linalg.norm(new_q)
         return new_q
 
-    def get_observer_prediction(self, new_x_k, reference_vector):
+    def get_observer_prediction(self, new_x_k, reference_vector, save=True, sensor_type='mag'):
         new_z_k = Quaternions(self.current_quaternion).frame_conv(reference_vector)
-        self.historical['mag_est'].append(new_z_k)
-        new_z_k = new_z_k / np.linalg.norm(new_z_k)
+        if save:
+            if sensor_type == 'mag':
+                new_z_k = new_z_k  # / np.linalg.norm(new_z_k)
+            elif sensor_type == 'css':
+                new_z_k = - 930 * np.eye(3) @ new_z_k / np.linalg.norm(new_z_k)
+                new_z_k[new_z_k < 0] = 0
         return new_z_k
 
     def attitude_observer_model(self, new_x, vector_i):
@@ -141,13 +145,16 @@ class MEKF_FULL(EKF):
         H[:3, :3] = skew(Quaternions(self.current_quaternion).frame_conv(vector_i))
         return H
 
-    def update_state(self, new_x_k, z_k_medido, z_from_observer):
+    def update_state(self, new_x_k, z_k_medido, z_from_observer, H_):
         error = z_k_medido - z_from_observer
-        correction = self.kf_K @ error
-        if np.linalg.norm(correction) > 1e-3:
+        correction = self.kf_K @ error + self.kf_K @ H_ @ new_x_k
+        if np.any(np.isnan(correction)):
             print("correction: {}".format(correction))
         new_x = new_x_k + correction
         return new_x
+
+    def save_vector(self, name=None, vector=None):
+        self.historical[name].append(vector)
 
     def reset_state(self):
         # theta error
@@ -180,7 +187,8 @@ class MEKF_FULL(EKF):
         self.historical['scale'].append(self.scale)
         self.historical['ku'].append(self.k_u)
         self.historical['kl'].append(self.k_l)
-        self.historical['p_cov'].append(self.covariance_P.flatten())
+        self.historical['p_cov'].append(np.diag(self.covariance_P))
+        self.historical['eigP'].append(np.sqrt(np.linalg.eigvals(self.covariance_P)))
 
 
 if __name__ == '__main__':

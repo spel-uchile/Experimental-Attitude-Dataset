@@ -37,7 +37,7 @@ class Monitor:
         self.vectors[name] = {'data': self.dataset[name],
                               'color': color}
 
-    def plot(self, x_dataset, y_dataset, xname=None, yname=None, title=None, step=False, scale=1.0, fft=False):
+    def plot(self, x_dataset, y_dataset, xname=None, yname=None, title=None, step=False, scale=1.0, fft=False, ls='-'):
         if fft:
             dataset = self.fft_dataset
         else:
@@ -55,7 +55,7 @@ class Monitor:
             elif fft:
                 plt.stem(x, y * scale, label=y_dataset)
             else:
-                plt.plot(x, y * scale, label=y_dataset, lw=0.7)
+                plt.plot(x, y * scale, label=y_dataset, lw=0.7, ls=ls)
         else:
             color = ['b', 'r']
             i = 0
@@ -92,7 +92,7 @@ class Monitor:
 
     @staticmethod
     def show_monitor():
-        plt.show()
+        plt.show(block=False)
 
 
 class Monitor3d:
@@ -233,8 +233,8 @@ class Monitor3d:
                 vect_pos = arrow['data'][index_]
                 last_vect_pos = arrow['data'][self.last_index_]
             else:
-                vect_pos = arrow['data'][index_] - sc_pos_i
-                last_vect_pos = arrow['data'][self.last_index_] - self.last_pos
+                vect_pos = arrow['data'][index_]# - sc_pos_i
+                last_vect_pos = arrow['data'][self.last_index_]
 
             en = np.linalg.norm(vect_pos)
             ln = np.linalg.norm(last_vect_pos)
@@ -245,7 +245,10 @@ class Monitor3d:
                 rot_vec = np.zeros(3)
             ang_rot = np.arccos(np.dot(last_vect_pos, vect_pos) / (en * ln))
             arrow['model'].translate(relative_pos, inplace=True)
-            arrow['model'].rotate_vector(vector=rot_vec, angle=np.rad2deg(ang_rot), point=sc_pos_i, inplace=True)
+            arrow['model'].rotate_vector(vector=rot_vec,
+                                         angle=np.rad2deg(ang_rot),
+                                         point=sc_pos_i,
+                                         inplace=True)
         self.plotter3d.render()
         self.plotter3d.subplot(0, 0)
         self.plotter3d.render()

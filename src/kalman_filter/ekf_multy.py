@@ -24,7 +24,7 @@ class MEKF(EKF):
         self.sigma_omega = 0
         self.sigma_bias = 0
         self.historical = {'q_est': [], 'b_est': [np.zeros(3)], 'mag_est': [], 'omega_est': [],
-                           'p_cov': [self.covariance_P.flatten()], 'css_est': [], 'sun_b_est': []}
+                           'p_cov': [np.diag(self.covariance_P)], 'css_est': [], 'sun_b_est': []}
 
     def add_reference_vector(self, vector):
         self.reference_vector = vector
@@ -120,6 +120,9 @@ class MEKF(EKF):
     def save_vector(self, name=None, vector=None):
         self.historical[name].append(vector)
 
+    def get_calibrate_omega(self):
+        return self.omega_state - self.current_bias
+
     def attitude_observer_model(self, new_x, vector_i):
         H = np.zeros((3, 6))
         H[:3, :3] = skew(Quaternions(self.current_quaternion).frame_conv(vector_i))
@@ -151,7 +154,7 @@ class MEKF(EKF):
         self.internal_state = np.zeros(6)
         self.historical['q_est'].append(self.current_quaternion)
         self.historical['b_est'].append(self.current_bias.copy())
-        self.historical['p_cov'].append(self.covariance_P.flatten())
+        self.historical['p_cov'].append(np.diag(self.covariance_P))
 
 
 if __name__ == '__main__':
