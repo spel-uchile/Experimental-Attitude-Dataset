@@ -65,14 +65,15 @@ class RealData:
     def scale_mag(self, scale_):
         self.data[['mag_x', 'mag_y', 'mag_z']] *= scale_
 
-    def calibrate_mag(self, scale: np.array = None, bias: np.array = None, mag_i: np.array = None, by_file=False):
+    def calibrate_mag(self, scale: np.array = None, bias: np.array = None, mag_i: np.array = None,
+                      by_file=False, force=False):
         if scale is not None and bias is not None:
             self.data[['mag_x', 'mag_y', 'mag_z']] = np.matmul(self.data[['mag_x', 'mag_y', 'mag_z']],
                                                                (np.eye(3) + scale)) - bias
         elif mag_i is not None:
             # if no exist file_name
             file_name = self.folder_path + "calibration_" + self.file_name.split('.')[0] + ".json"
-            if os.path.exists(file_name):
+            if os.path.exists(file_name) and not force:
                 with open(self.folder_path + "calibration_" + self.file_name.split('.')[0] + ".json") as data_file:
                     data_loaded = json.load(data_file)
                 d = np.asarray(data_loaded['D'])
@@ -88,6 +89,7 @@ class RealData:
                 self.data[['mag_x', 'mag_y', 'mag_z']] = np.matmul(self.data[['mag_x', 'mag_y', 'mag_z']],
                                                                    (np.eye(3) + scale)) - bias
             else:
+                # factor_ = np.mean(np.linalg.norm(mag_i, axis=1)) / np.mean(np.linalg.norm(self.data[['mag_x', 'mag_y', 'mag_z']].values, axis=1))
                 x_non_sol, sig3_non, x_lin_sol, sig3_lin = two_step(
                     self.data[['mag_x', 'mag_y', 'mag_z']].values[:len(mag_i)], np.asarray(mag_i))
 
@@ -96,6 +98,10 @@ class RealData:
                     json.dump(data, f)
                     f.close()
                 print(x_non_sol, sig3_non, x_lin_sol, sig3_lin)
+                bias = x_non_sol[:3]
+                scale = self.get_full_D(x_non_sol[3:])
+                self.data[['mag_x', 'mag_y', 'mag_z']] = np.matmul(self.data[['mag_x', 'mag_y', 'mag_z']],
+                                                                   (np.eye(3) + scale)) - bias
 
     def set_window_time(self, start_str=None, stop_str=None, format_time=None):
         if start_str is None and stop_str is None and format_time is None:
@@ -137,6 +143,22 @@ class RealData:
             temp = self.data['DateTime'].values[np.argwhere(model.labels_ == i)]
             print(f"Cluster {i}: Start: {temp[0]} - Stop: {temp[-1]}")
         return model
+
+    @staticmethod
+    def get_full_D(d_vector):
+        d_ = np.zeros((3, 3))
+        d_[0, 0] = d_vector[0]
+        d_[1, 1] = d_vector[1]
+        d_[2, 2] = d_vector[2]
+
+        d_[0, 1] = d_vector[3]
+        d_[0, 2] = d_vector[4]
+        d_[1, 0] = d_vector[3]
+        d_[2, 0] = d_vector[4]
+
+        d_[1, 2] = d_vector[5]
+        d_[2, 1] = d_vector[5]
+        return d_
 
 
 def plot_dendrogram(model, **kwargs):

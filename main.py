@@ -28,7 +28,7 @@ from tools.monitor import Monitor
 import importlib.util
 
 # CONFIG
-PROJECT_FOLDER = "./data/M-20230824/"
+PROJECT_FOLDER = "./data/20240804/"
 # PROJECT_FOLDER = "./data/20230904/"
 module_name = "dataconfig"
 
@@ -134,12 +134,15 @@ if __name__ == '__main__':
     plt.plot(channels['full_time'], channels['mag_i'][:, 2], 'o-', color='green', label='mag_z [mG]')
     plt.grid()
     plt.legend()
+    sensors.plot_key(['mag_x', 'mag_y', 'mag_z'], color=['blue', 'orange', 'green'],
+                     label=['x [mG]', 'y [mG]', 'z [mG]'])
 
     # calibration
     ekf_mag_cal = None
     new_sensor = []
     sensors.plot_key(['mag_x', 'mag_y', 'mag_z'], color=['blue', 'orange', 'green'], label=['x [mG]', 'y [mG]', 'z [mG]'])
-    sensors.calibrate_mag(mag_i=channels['mag_i'])
+    # sensors.calibrate_mag(mag_i=channels['mag_i'])
+    # sensors.calibrate_mag(mag_i=channels['mag_i'], force=True)
     sensors.plot_key(['mag_x'], color=['blue'], label=['x [mG]'])
     sensors.plot_key(['mag_y'], color=['orange'], label=['y [mG]'])
     sensors.plot_key(['mag_z'], color=['green'], label=['z [mG]'])
@@ -157,8 +160,8 @@ if __name__ == '__main__':
 
     if ONLINE_MAG_CALIBRATION:
         ukf = MagUKF(alpha=1)
-        D_est = np.zeros(6) + 1e-4
-        b_est = np.zeros(3) + 100
+        D_est = np.zeros(6) + 1e-7
+        b_est = np.zeros(3) + 10
         P_est = np.diag([*b_est, *D_est])  # (uT)^2
         ukf.pCov_x = P_est
         ukf.pCov_zero = P_est / 2
@@ -175,7 +178,7 @@ if __name__ == '__main__':
             #         flag_t = False
             #     else:
             #         flag_t = True
-            ukf.run(mag_b_, mag_i_, 200, 5000, 30)
+            ukf.run(mag_b_, mag_i_, 200)#, 5000, 30)
             bias_, D_scale = ukf.get_calibration()
             new_sensor_ukf.append((np.eye(3) + D_scale) @ mag_b_ - bias_)
             stop_k += 1
@@ -209,7 +212,7 @@ if __name__ == '__main__':
         # plt.plot(channels['full_time'], channels['mag_i'][:, 1], label='mag_y')
         # plt.plot(channels['full_time'], channels['mag_i'][:, 2], label='mag_z')
         # plt.legend()
-    #     plt.show()
+        plt.show()
     # exit()
     omega_b = sensors.data[['acc_x', 'acc_y', 'acc_z']].values[0]
     q_i2b = Quaternions.get_from_two_v(channels['mag_i'][0], sensors.data[['mag_x', 'mag_y', 'mag_z']].values[0])()
@@ -285,7 +288,7 @@ if __name__ == '__main__':
         # css
         css_est = np.zeros(3)
         is_dark = shadow_zone(channels['sat_pos_i'][k], channels['sun_i'][k])
-        if not is_dark and np.linalg.norm(css_3_) > 400:
+        if not is_dark and np.linalg.norm(css_3_) > 100:
             css_est = ekf_model.inject_vector(css_3_, sun_sc_i_, gain=-Imax * np.eye(3), sigma2=200, sensor='css')
         ekf_model.save_vector(name='css_est', vector=css_est)
         ekf_model.save_vector(name='mag_est', vector=mag_est)

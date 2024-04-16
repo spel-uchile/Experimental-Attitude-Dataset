@@ -87,7 +87,7 @@ def two_step(bm_, ar_):
         evec = xc[3:9]
         emat = np.array([[evec[0], evec[3], evec[4]], [evec[3], evec[1], evec[5]], [evec[4], evec[5], evec[2]]])
         ss, uu = np.linalg.eig(emat)
-        ww = np.diag([-1 + np.sqrt(1 + ss[0]), -1 + np.sqrt(1 + ss[1]), -1 + np.sqrt(1 + ss[2])])
+        ww = np.diag([-1 + np.sqrt(abs(1 + ss[0])), -1 + np.sqrt(abs(1 + ss[1])), -1 + np.sqrt(abs(1 + ss[2]))])
         dd = uu @ ww @ uu.T
         bb = np.linalg.inv(np.eye(3) + dd) @ xc[:3]
         xcc = np.array([bb[0], bb[1], bb[2], dd[0, 0], dd[1, 1], dd[2, 2], dd[0, 1], dd[0, 2], dd[1, 2]])
@@ -95,7 +95,7 @@ def two_step(bm_, ar_):
         evec = xe_lin[3:9]
         emat = np.array([[evec[0], evec[3], evec[4]], [evec[3], evec[1], evec[5]], [evec[4], evec[5], evec[2]]])
         ss, uu = np.linalg.eig(emat)
-        ww = np.diag([-1 + np.sqrt(1 + ss[0]), -1 + np.sqrt(1 + ss[1]), -1 + np.sqrt(1 + ss[2])])
+        ww = np.diag([-1 + np.sqrt(abs(1 + ss[0])), -1 + np.sqrt(abs(1 + ss[1])), -1 + np.sqrt(abs(1 + ss[2]))])
         dd = uu @ ww @ uu.T
         bb = np.linalg.inv(np.eye(3) + dd) @ xe_lin[:3]
         xee_lin = np.array([bb[0], bb[1], bb[2], dd[0, 0], dd[1, 1], dd[2, 2], dd[0, 1], dd[0, 2], dd[1, 2]])
