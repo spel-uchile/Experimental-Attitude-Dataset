@@ -16,6 +16,7 @@ class Monitor:
     def __init__(self, dataset):
         self.dataset = dataset
         self.fft_dataset = {}
+        self.datetime = self.dataset['DateTime']
         self.position = None
         self.q_i2b = None
         self.sideral = None
@@ -86,7 +87,7 @@ class Monitor:
             self.fft_dataset[elem + '_freq'] = f_plot
 
     def plot3d(self):
-        monitor_3d = Monitor3d(self.position, self.q_i2b, self.sideral)
+        monitor_3d = Monitor3d(self.position, self.q_i2b, self.sideral, self.datetime)
         monitor_3d.add_vectors(self.vectors)
         monitor_3d.plotter3d.show()
 
@@ -100,7 +101,7 @@ class Monitor3d:
                   pv.Arrow(np.zeros(3), direction=np.array([0, 1, 0]), scale=1),
                   pv.Arrow(np.zeros(3), direction=np.array([0, 0, 1]), scale=1)]
 
-    def __init__(self, position, q_i2b, sideral):
+    def __init__(self, position, q_i2b, sideral, date_time):
         self.plotter3d = pv.Plotter(shape=(1, 2))
         self.vectors = {}
         self.body_x_i = None
@@ -109,6 +110,7 @@ class Monitor3d:
         self.flag = False
         self.view_worker = None
         self.last_index_ = 0
+        self.date_time = date_time
         self.last_pos = np.zeros(3)
         self.last_q_i2b = pyquat(np.array([1, 0, 0, 0]))
         self.last_sideral = 0
@@ -122,7 +124,7 @@ class Monitor3d:
 
         self.sat_model = pv.PolyData("tools/cad/basic3U.stl")
         self.plotter3d.subplot(0, 0)
-        self.plotter3d.set_background(color='gray')
+        self.plotter3d.set_background(color='black')
         self.plotter3d.add_mesh(self.earth3d, texture=texture)  # , color='#0C007C')
         self.plotter3d.add_mesh(self.sat_model, color='white')
         self.plotter3d.add_points(np.array([elem for elem in self.sat_pos]), render_points_as_spheres=True,
@@ -133,18 +135,14 @@ class Monitor3d:
 
         # reset earth
         self.plotter3d.subplot(0, 1)
-        self.camera_rpi = pv.Camera()
-        self.plotter3d.set_background(color='gray')
+        self.plotter3d.add_text(self.date_time[0], font_size=15, position='lower_left', name='text', color='yellow')
+        self.plotter3d.set_background(color='black')
         self.plotter3d.add_mesh(self.earth3d, texture=texture)  # , color='#0C007C')
-        self.plotter3d.subplot(0, 1)
-        self.plotter3d.camera.position = self.sat_pos[0]
-        self.plotter3d.camera.up = (0, 0, 1)
-        self.plotter3d.camera.focal_point = (0, 1, 0)
-        self.plotter3d.camera.view_angle = 48.8
         self._last_focal = (0, 1, 0)
 
         self.plotter3d.subplot(0, 0)
         self.earth3d.rotate_z(180, inplace=True)
+        self.update(0)
         self.plotter3d.add_slider_widget(self.update, [0, len(self.sat_pos) - 1], value=0, title='Step')
         self.btn = self.plotter3d.add_checkbox_button_widget(self.forward, value=False)
 
@@ -181,7 +179,7 @@ class Monitor3d:
             if self.last_index_ < len(self.sat_pos) - 1:
                 print(self.last_index_ + 1)
                 self.update(self.last_index_ + 1)
-                time.sleep(0.1)
+                time.sleep(0.2)
             else:
                 self.last_index_ = 0
 
@@ -214,16 +212,23 @@ class Monitor3d:
 
         fv = self._last_focal
         dir_vec = (np.mean(self.body_y_i.points, axis=0) - sc_pos_i)
-        dir_vec = np.asarray(dir_vec)
-        dir_vec /= np.linalg.norm(dir_vec)
+        dir_z = (np.mean(self.body_z_i.points, axis=0) - sc_pos_i)
+        dir_x = (np.mean(self.body_x_i.points, axis=0) - sc_pos_i)
+        dir_vec = 2*6700 * np.asarray(dir_vec)
+        dir_z /= np.linalg.norm(dir_z)
+        dir_x /= np.linalg.norm(dir_x)
         print(dir_vec, d_quaternion.rotate(np.asarray(fv)))
         self._last_focal = dir_vec
-        self.camera_rpi.focal_point = dir_vec
+        # self.camera_rpi.focal_point = dir_vec
         self.plotter3d.subplot(0, 1)
-        self.plotter3d.camera.focal_point = dir_vec
-        self.plotter3d.camera.position += relative_pos
-        self.plotter3d.camera.up = (0, 0, 1)
-        self.plotter3d.camera.view_angle = 48.8
+        self.plotter3d.remove_actor('text')
+        self.plotter3d.add_text(self.date_time[index_], font_size=15, name='text', color='yellow', position='lower_left')
+        self.plotter3d.camera_position = [sc_pos_i,
+                                          dir_vec,
+                                          -dir_z]
+        #self.plotter3d.camera.roll = np.arccos(np.dot(-dir_z, np.array([0, -1, 0]))) * 180 / np.pi
+        # self.plotter3d.camera.up = (0, 0, 1)
+        # self.plotter3d.camera.view_angle = 48.8
         # earth
         sideral = self.earth_sideral[index_]
         self.earth3d.rotate_z((sideral - self.last_sideral) * np.rad2deg(1), inplace=True)
@@ -241,9 +246,10 @@ class Monitor3d:
             rot_vec = np.cross(last_vect_pos, vect_pos) / (en * ln)
             if np.linalg.norm(rot_vec) > 1e-9:
                 rot_vec /= np.linalg.norm(rot_vec)
+                ang_rot = np.arccos(np.dot(last_vect_pos, vect_pos) / (en * ln))
             else:
-                rot_vec = np.zeros(3)
-            ang_rot = np.arccos(np.dot(last_vect_pos, vect_pos) / (en * ln))
+                rot_vec = np.array([1, 0, 0])
+                ang_rot = 0.0
             arrow['model'].translate(relative_pos, inplace=True)
             arrow['model'].rotate_vector(vector=rot_vec,
                                          angle=np.rad2deg(ang_rot),
@@ -251,6 +257,8 @@ class Monitor3d:
                                          inplace=True)
         self.plotter3d.render()
         self.plotter3d.subplot(0, 0)
+        self.plotter3d.render()
+        self.plotter3d.subplot(0, 1)
         self.plotter3d.render()
         self.last_sideral = sideral
         self.last_pos = sc_pos_i

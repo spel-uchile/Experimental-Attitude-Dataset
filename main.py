@@ -25,10 +25,11 @@ from src.dynamics.MagEnv import MagEnv
 from tools.get_video_frame import save_frame
 from tools.get_point_vector_from_picture import get_vector
 from tools.monitor import Monitor
+from tools.mathtools import julian_to_datetime
 import importlib.util
 
 # CONFIG
-PROJECT_FOLDER = "./data/20240804/"
+PROJECT_FOLDER = "./data/20230904/"
 # PROJECT_FOLDER = "./data/20230904/"
 module_name = "dataconfig"
 
@@ -128,181 +129,182 @@ if __name__ == '__main__':
         with open(PROJECT_FOLDER + 'channels.p', 'wb') as file_:
             pickle.dump(channels, file_)
 
-    plt.figure()
-    plt.plot(channels['full_time'], channels['mag_i'][:, 0], 'o-', color='blue', label='mag_x [mG]')
-    plt.plot(channels['full_time'], channels['mag_i'][:, 1], 'o-', color='orange', label='mag_y [mG]')
-    plt.plot(channels['full_time'], channels['mag_i'][:, 2], 'o-', color='green', label='mag_z [mG]')
-    plt.grid()
-    plt.legend()
-    sensors.plot_key(['mag_x', 'mag_y', 'mag_z'], color=['blue', 'orange', 'green'],
-                     label=['x [mG]', 'y [mG]', 'z [mG]'])
-
-    # calibration
-    ekf_mag_cal = None
-    new_sensor = []
-    sensors.plot_key(['mag_x', 'mag_y', 'mag_z'], color=['blue', 'orange', 'green'], label=['x [mG]', 'y [mG]', 'z [mG]'])
-    # sensors.calibrate_mag(mag_i=channels['mag_i'])
-    # sensors.calibrate_mag(mag_i=channels['mag_i'], force=True)
-    sensors.plot_key(['mag_x'], color=['blue'], label=['x [mG]'])
-    sensors.plot_key(['mag_y'], color=['orange'], label=['y [mG]'])
-    sensors.plot_key(['mag_z'], color=['green'], label=['z [mG]'])
-    sensors.plot_key(['sun3'], color=['blue'], label=['-x [mA]'])
-    sensors.plot_key(['sun2'], color=['orange'], label=['-y [mA]'])
-    sensors.plot_key(['sun4'], color=['green'], label=['-z [mA]'])
-
-    error_mag_ts = np.linalg.norm(channels['mag_i'], axis=1) - np.linalg.norm(sensors.data[['mag_x', 'mag_y', 'mag_z']], axis=1)
-    mse_ts = mean_squared_error(np.linalg.norm(channels['mag_i'], axis=1), np.linalg.norm(sensors.data[['mag_x', 'mag_y', 'mag_z']], axis=1))
-    plt.figure()
-    plt.title("Two Step Magnitude Error")
-    plt.plot(error_mag_ts, label='RMSE: {:2f}'.format(np.sqrt(mse_ts)))
-    plt.legend()
-    plt.grid()
-
-    if ONLINE_MAG_CALIBRATION:
-        ukf = MagUKF(alpha=1)
-        D_est = np.zeros(6) + 1e-7
-        b_est = np.zeros(3) + 10
-        P_est = np.diag([*b_est, *D_est])  # (uT)^2
-        ukf.pCov_x = P_est
-        ukf.pCov_zero = P_est / 2
-        new_sensor_ukf = []
-        stop_k = 0
-        flag_t = True
-        for mag_i_, mag_b_ in zip(channels['mag_i'], sensors.data[['mag_x', 'mag_y', 'mag_z']].values):
-            ukf.save()
-            # if len(ukf.historical['error']) > 0:
-            #     if ukf.historical['error'][-1] > 5000 and flag_t:
-            #         print("Before: ", stop_k, ukf.historical['error'][-1])
-            #         P_est = np.diag([*b_est, *D_est])  # (uT)^2
-            #         ukf.pCov_x = P_est
-            #         flag_t = False
-            #     else:
-            #         flag_t = True
-            ukf.run(mag_b_, mag_i_, 200)#, 5000, 30)
-            bias_, D_scale = ukf.get_calibration()
-            new_sensor_ukf.append((np.eye(3) + D_scale) @ mag_b_ - bias_)
-            stop_k += 1
-        # ukf.plot(np.linalg.norm(np.asarray(new_sensor_ukf), axis=1), np.linalg.norm(mag_i, axis=1))
-
-        # plot
-        sensors.plot_key(['mag_x', 'mag_y', 'mag_z'])
-        # sensors.plot_key(['acc_x', 'acc_y', 'acc_z'])
-        # sensors.plot_key(['sun3', 'sun2', 'sun4'])
-
-        D_ukf_vector = ukf.historical['scale'][-1]
-        b_ukf = ukf.historical['bias'][-1]
-        print(b_ukf, D_ukf_vector)
-        D_ukf = np.array([[D_ukf_vector[0], D_ukf_vector[3], D_ukf_vector[4]],
-                          [D_ukf_vector[3], D_ukf_vector[1], D_ukf_vector[5]],
-                          [D_ukf_vector[4], D_ukf_vector[5], D_ukf_vector[2]]])
-
-        # mag_ukf = (np.eye(3) + D_ukf).dot(sensors.data[['mag_x', 'mag_y', 'mag_z']].values.T).T - b_ukf.reshape(-1, 1).T
-        mag_ukf = np.asarray(new_sensor_ukf)
-        sensors.data[['mag_x', 'mag_y', 'mag_z']] = mag_ukf
-        ukf.plot(np.linalg.norm(mag_ukf, axis=1), np.linalg.norm(channels['mag_i'], axis=1))
-        plt.figure()
-        plt.plot(mag_ukf[:, 0], label='new_mag_x')
-        plt.plot(mag_ukf[:, 1], label='new_mag_y')
-        plt.plot(mag_ukf[:, 2], label='new_mag_z')
-        plt.legend()
-        plt.grid()
-
-        # plt.figure()
-        # plt.plot(channels['full_time'], channels['mag_i'][:, 0], label='mag_x')
-        # plt.plot(channels['full_time'], channels['mag_i'][:, 1], label='mag_y')
-        # plt.plot(channels['full_time'], channels['mag_i'][:, 2], label='mag_z')
-        # plt.legend()
-        plt.show()
-    # exit()
-    omega_b = sensors.data[['acc_x', 'acc_y', 'acc_z']].values[0]
-    q_i2b = Quaternions.get_from_two_v(channels['mag_i'][0], sensors.data[['mag_x', 'mag_y', 'mag_z']].values[0])()
-    mag_b = Quaternions(q_i2b).frame_conv(channels['mag_i'][0])
-    moon_b = Quaternions(q_i2b).frame_conv(channels['moon_sc_i'][0])
-
-    if EKF_SETUP == 'NORMAL':
-        # MEKF
-        P = np.diag([0.5, 0.5, 0.5, 0.01, 0.01, 0.01])
-        ekf_model = MEKF(inertia, P=P, Q=np.zeros((6, 6)), R=np.zeros((3, 3)))
-        ekf_model.sigma_bias = 0.0001
-        ekf_model.sigma_omega = 0.0001
-        ekf_model.current_bias = np.array([0.0, 0.0, 0])
-    elif EKF_SETUP == 'FULL':
-        # MEKF
-        P = np.diag([0.5, 0.5, 0.5, 0.01, 0.01, 0.01, 1e-7, 1e-7, 1e-7, 1e-7, 1e-7, 1e-7, 1e-7, 1e-7, 1e-7]) * 100
-        ekf_model = MEKF_FULL(inertia, P=P, Q=np.zeros((15, 15)), R=np.zeros((3, 3)))
-        ekf_model.sigma_bias = 0.0005
-        ekf_model.sigma_omega = 0.0001
-
-    ekf_model.set_quat(q_i2b, save=True)
-    ekf_model.set_gyro_measure(omega_b)
-    ekf_model.save_vector(name='mag_est', vector=sensors.data[['mag_x', 'mag_y', 'mag_z']].values[0])
-    ekf_model.save_vector(name='css_est', vector=sensors.data[['sun3', 'sun2', 'sun4']].values[0])
-    ekf_model.save_vector(name='sun_b_est', vector=Quaternions(q_i2b).frame_conv(channels['sun_sc_i'][0]))
-
     Imax = 930
     pred_step_sec = 60
 
-    # ukf_model = UKF(P, dt=1)
-    # ukf_model.set_quat(q_i2b, save=True)
-    # ukf_model.save_vector(name='mag_est', vector=sensors.data[['mag_x', 'mag_y', 'mag_z']].values[0])
-    # ukf_model.save_vector(name='css_est', vector=sensors.data[['sun3', 'sun2', 'sun4']].values[0])
-    # ukf_model.save_vector(name='sun_b_est', vector=Quaternions(q_i2b).frame_conv(sun_sc_i[0]))
-    # ukf_model.set_gyro_measure(omega_b)
-    # ukf_model.set_Q(ekf_model.sigma_omega, ekf_model.sigma_bias)
-    k = 1
-    moon_sc_b = [moon_b]
-    t0 = channels['full_time'][0]
-    sensor_step = 1
-    for t_, omega_gyro_, mag_ref_, body_vec_, sun_sc_i_, css_3_ in zip(channels['full_time'][1:],
-                                                                       sensors.data[['acc_x', 'acc_y', 'acc_z']].values[
-                                                                       1:],
-                                                                       channels['mag_i'][1:],
-                                                                       sensors.data[['mag_x', 'mag_y', 'mag_z']].values[
-                                                                       1:],
-                                                                       channels['sun_sc_i'][1:],
-                                                                       sensors.data[['sun3', 'sun2', 'sun4']].values[
-                                                                       1:]):
-        # Optimization of R and Q
-        # ekf_model.optimize_R_Q(body_vec_, mag_ref_, dt)
+    if os.path.exists(PROJECT_FOLDER + "kf_results.p"):
+        with open(PROJECT_FOLDER + "kf_results.p", 'rb') as fp:
+            ekf_channels = pickle.load(fp)
+    else:
+        plt.figure()
+        plt.plot(channels['full_time'], channels['mag_i'][:, 0], 'o-', color='blue', label='mag_x [mG]')
+        plt.plot(channels['full_time'], channels['mag_i'][:, 1], 'o-', color='orange', label='mag_y [mG]')
+        plt.plot(channels['full_time'], channels['mag_i'][:, 2], 'o-', color='green', label='mag_z [mG]')
+        plt.grid()
+        plt.legend()
+        sensors.plot_key(['mag_x', 'mag_y', 'mag_z'], color=['blue', 'orange', 'green'],
+                         label=['x [mG]', 'y [mG]', 'z [mG]'])
 
-        omega_b_pred = ekf_model.get_calibrate_omega()
-        q_i2b_pred = ekf_model.current_quaternion
+        # calibration
+        ekf_mag_cal = None
+        new_sensor = []
+        sensors.plot_key(['mag_x', 'mag_y', 'mag_z'], color=['blue', 'orange', 'green'], label=['x [mG]', 'y [mG]', 'z [mG]'])
+        sensors.calibrate_mag(mag_i=channels['mag_i'])
+        # sensors.calibrate_mag(mag_i=channels['mag_i'], force=True)
+        sensors.plot_key(['mag_x'], color=['blue'], label=['x [mG]'])
+        sensors.plot_key(['mag_y'], color=['orange'], label=['y [mG]'])
+        sensors.plot_key(['mag_z'], color=['green'], label=['z [mG]'])
+        sensors.plot_key(['sun3'], color=['blue'], label=['-x [mA]'])
+        sensors.plot_key(['sun2'], color=['orange'], label=['-y [mA]'])
+        sensors.plot_key(['sun4'], color=['green'], label=['-z [mA]'])
 
-        for _ in range(int(pred_step_sec / 0.1)):
-            q_i2b_pred = calc_quaternion(q_i2b_pred, omega_b_pred, 0.1)
-            omega_b_pred = calc_omega_b(omega_b_pred, 0.1)
-        t_pred = t_ + pred_step_sec
+        error_mag_ts = np.linalg.norm(channels['mag_i'], axis=1) - np.linalg.norm(sensors.data[['mag_x', 'mag_y', 'mag_z']], axis=1)
+        mse_ts = mean_squared_error(np.linalg.norm(channels['mag_i'], axis=1), np.linalg.norm(sensors.data[['mag_x', 'mag_y', 'mag_z']], axis=1))
+        plt.figure()
+        plt.title("Two Step Magnitude Error")
+        plt.plot(error_mag_ts, label='RMSE: {:2f}'.format(np.sqrt(mse_ts)))
+        plt.legend()
+        plt.grid()
 
-        # # integration
-        dt = np.round((t_ - t0) * 86400, 3)
-        while dt - sensor_step >= 0.0:
-            print(k, dt)
-            ekf_model.propagate(sensor_step)
-            dt -= sensor_step
-        t0 = t_
-        # ukf_model.predict()
-        # mag
-        mag_est = ekf_model.inject_vector(body_vec_, mag_ref_, sigma2=200, sensor='mag')
+        if ONLINE_MAG_CALIBRATION:
+            ukf = MagUKF(alpha=1)
+            D_est = np.zeros(6) + 1e-7
+            b_est = np.zeros(3) + 100
+            P_est = np.diag([*b_est, *D_est])  # (uT)^2
+            ukf.pCov_x = P_est
+            ukf.pCov_zero = P_est / 2
+            new_sensor_ukf = []
+            stop_k = 0
+            flag_t = True
+            for mag_i_, mag_b_ in zip(channels['mag_i'], sensors.data[['mag_x', 'mag_y', 'mag_z']].values):
+                ukf.save()
+                ukf.run(mag_b_, mag_i_, 200, 10000, 100)
+                bias_, D_scale = ukf.get_calibration()
+                new_sensor_ukf.append((np.eye(3) + D_scale) @ mag_b_ - bias_)
+                stop_k += 1
+            # ukf.plot(np.linalg.norm(np.asarray(new_sensor_ukf), axis=1), np.linalg.norm(mag_i, axis=1))
 
-        # mag_est_ukf = ukf_model.inject_vector(body_vec_, mag_ref_, sigma2=5000, sensor='mag')
-        # css
-        css_est = np.zeros(3)
-        is_dark = shadow_zone(channels['sat_pos_i'][k], channels['sun_i'][k])
-        if not is_dark and np.linalg.norm(css_3_) > 100:
-            css_est = ekf_model.inject_vector(css_3_, sun_sc_i_, gain=-Imax * np.eye(3), sigma2=200, sensor='css')
-        ekf_model.save_vector(name='css_est', vector=css_est)
-        ekf_model.save_vector(name='mag_est', vector=mag_est)
-        ekf_model.save_vector(name='sun_b_est', vector=Quaternions(ekf_model.current_quaternion).frame_conv(sun_sc_i_))
-        ekf_model.reset_state()
-        moon_sc_b.append(Quaternions(ekf_model.current_quaternion).frame_conv(channels['moon_sc_i'][k]))
-        ekf_model.set_gyro_measure(omega_gyro_)
-        # save data
-        channels['time_pred'].append(t_pred)
-        channels['q_i2b_pred'].append(q_i2b_pred)
-        channels['omega_b_pred'].append(omega_b_pred)
-        k += 1
+            # plot
+            sensors.plot_key(['mag_x', 'mag_y', 'mag_z'])
+            # sensors.plot_key(['acc_x', 'acc_y', 'acc_z'])
+            # sensors.plot_key(['sun3', 'sun2', 'sun4'])
 
-    channels = {**channels, **ekf_model.historical}
+            D_ukf_vector = ukf.historical['scale'][-1]
+            b_ukf = ukf.historical['bias'][-1]
+            print(b_ukf, D_ukf_vector)
+            D_ukf = np.array([[D_ukf_vector[0], D_ukf_vector[3], D_ukf_vector[4]],
+                              [D_ukf_vector[3], D_ukf_vector[1], D_ukf_vector[5]],
+                              [D_ukf_vector[4], D_ukf_vector[5], D_ukf_vector[2]]])
+
+            # mag_ukf = (np.eye(3) + D_ukf).dot(sensors.data[['mag_x', 'mag_y', 'mag_z']].values.T).T - b_ukf.reshape(-1, 1).T
+            mag_ukf = np.asarray(new_sensor_ukf)
+            sensors.data[['mag_x', 'mag_y', 'mag_z']] = mag_ukf
+            ukf.plot(np.linalg.norm(mag_ukf, axis=1), np.linalg.norm(channels['mag_i'], axis=1))
+            plt.figure()
+            plt.plot(mag_ukf[:, 0], label='new_mag_x')
+            plt.plot(mag_ukf[:, 1], label='new_mag_y')
+            plt.plot(mag_ukf[:, 2], label='new_mag_z')
+            plt.legend()
+            plt.grid()
+
+            plt.figure()
+            plt.plot(channels['full_time'], channels['mag_i'][:, 0], label='mag_x')
+            plt.plot(channels['full_time'], channels['mag_i'][:, 1], label='mag_y')
+            plt.plot(channels['full_time'], channels['mag_i'][:, 2], label='mag_z')
+            plt.legend()
+            plt.show()
+        # exit()
+        omega_b = sensors.data[['acc_x', 'acc_y', 'acc_z']].values[0]
+        q_i2b = Quaternions.get_from_two_v(channels['mag_i'][0], sensors.data[['mag_x', 'mag_y', 'mag_z']].values[0])()
+        mag_b = Quaternions(q_i2b).frame_conv(channels['mag_i'][0])
+        moon_b = Quaternions(q_i2b).frame_conv(channels['moon_sc_i'][0])
+
+        if EKF_SETUP == 'NORMAL':
+            # MEKF
+            P = np.diag([0.5, 0.5, 0.5, 0.01, 0.01, 0.01])*10
+            ekf_model = MEKF(inertia, P=P, Q=np.zeros((6, 6)), R=np.zeros((3, 3)))
+            ekf_model.sigma_bias = 1e-4
+            ekf_model.sigma_omega = 1e-5
+            ekf_model.current_bias = np.array([0.0, 0.0, 0])
+        elif EKF_SETUP == 'FULL':
+            # MEKF
+            P = np.diag([0.5, 0.5, 0.5, 0.01, 0.01, 0.01, 1e-7, 1e-7, 1e-7, 1e-7, 1e-7, 1e-7, 1e-7, 1e-7, 1e-7]) * 100
+            ekf_model = MEKF_FULL(inertia, P=P, Q=np.zeros((15, 15)), R=np.zeros((3, 3)))
+            ekf_model.sigma_bias = 0.0005
+            ekf_model.sigma_omega = 1e-6
+
+        ekf_model.set_quat(q_i2b, save=True)
+        ekf_model.set_gyro_measure(omega_b)
+        ekf_model.save_vector(name='mag_est', vector=sensors.data[['mag_x', 'mag_y', 'mag_z']].values[0])
+        ekf_model.save_vector(name='css_est', vector=sensors.data[['sun3', 'sun2', 'sun4']].values[0])
+        ekf_model.save_vector(name='sun_b_est', vector=Quaternions(q_i2b).frame_conv(channels['sun_sc_i'][0]))
+
+        # ukf_model = UKF(P, dt=1)
+        # ukf_model.set_quat(q_i2b, save=True)
+        # ukf_model.save_vector(name='mag_est', vector=sensors.data[['mag_x', 'mag_y', 'mag_z']].values[0])
+        # ukf_model.save_vector(name='css_est', vector=sensors.data[['sun3', 'sun2', 'sun4']].values[0])
+        # ukf_model.save_vector(name='sun_b_est', vector=Quaternions(q_i2b).frame_conv(sun_sc_i[0]))
+        # ukf_model.set_gyro_measure(omega_b)
+        # ukf_model.set_Q(ekf_model.sigma_omega, ekf_model.sigma_bias)
+        k = 1
+        moon_sc_b = [moon_b]
+        t0 = channels['full_time'][0]
+        sensor_step = 1
+        for t_, omega_gyro_, mag_ref_, body_vec_, sun_sc_i_, css_3_ in zip(channels['full_time'][1:],
+                                                                           sensors.data[['acc_x', 'acc_y', 'acc_z']].values[
+                                                                           1:],
+                                                                           channels['mag_i'][1:],
+                                                                           sensors.data[['mag_x', 'mag_y', 'mag_z']].values[
+                                                                           1:],
+                                                                           channels['sun_sc_i'][1:],
+                                                                           sensors.data[['sun3', 'sun2', 'sun4']].values[
+                                                                           1:]):
+            # Optimization of R and Q
+            # ekf_model.optimize_R_Q(body_vec_, mag_ref_, dt)
+
+            omega_b_pred = ekf_model.get_calibrate_omega()
+            q_i2b_pred = ekf_model.current_quaternion
+
+            for _ in range(int(pred_step_sec / 0.1)):
+                q_i2b_pred = calc_quaternion(q_i2b_pred, omega_b_pred, 0.1)
+                omega_b_pred = calc_omega_b(omega_b_pred, 0.1)
+            t_pred = t_ + pred_step_sec
+
+            # # integration
+            dt = np.round((t_ - t0) * 86400, 3)
+            while dt - sensor_step >= 0.0:
+                print(k, dt)
+                ekf_model.propagate(sensor_step)
+                dt -= sensor_step
+            t0 = t_
+            # ukf_model.predict()
+            # mag
+            mag_est = ekf_model.inject_vector(body_vec_, mag_ref_, sigma2=200, sensor='mag')
+
+            # mag_est_ukf = ukf_model.inject_vector(body_vec_, mag_ref_, sigma2=5000, sensor='mag')
+            # css
+            css_est = np.zeros(3)
+            is_dark = shadow_zone(channels['sat_pos_i'][k], channels['sun_i'][k])
+            if not is_dark and np.linalg.norm(css_3_) > 400:
+                css_est = ekf_model.inject_vector(css_3_, sun_sc_i_, gain=-Imax * np.eye(3), sigma2=300, sensor='css')
+            ekf_model.save_vector(name='css_est', vector=css_est)
+            ekf_model.save_vector(name='mag_est', vector=mag_est)
+            ekf_model.save_vector(name='sun_b_est', vector=Quaternions(ekf_model.current_quaternion).frame_conv(sun_sc_i_))
+            ekf_model.reset_state()
+            moon_sc_b.append(Quaternions(ekf_model.current_quaternion).frame_conv(channels['moon_sc_i'][k]))
+            ekf_model.set_gyro_measure(omega_gyro_)
+            # save data
+            channels['time_pred'].append(t_pred)
+            channels['q_i2b_pred'].append(q_i2b_pred)
+            channels['omega_b_pred'].append(omega_b_pred)
+            k += 1
+        ekf_channels = ekf_model.historical
+        with open(PROJECT_FOLDER + 'kf_results.p', 'wb') as file_:
+            pickle.dump(ekf_channels, file_)
+
+    data_text = ["{}".format(julian_to_datetime(jd_)) for jd_ in channels['full_time']]
+    channels['DateTime'] = data_text
+    channels = {**channels, **ekf_channels}
     error_mag = channels['mag_est'] - sensors.data[['mag_x', 'mag_y', 'mag_z']].values
     error_pred = [(Quaternions(Quaternions(q_p).conjugate()) * Quaternions(q_kf)).get_angle()
                   for q_p, q_kf in zip(channels['q_i2b_pred'], channels['q_est'][pred_step_sec:])]
@@ -325,6 +327,7 @@ if __name__ == '__main__':
 
     fov = 48 * np.deg2rad(1) / 2
     view_of_moon = np.cos(fov)
+    moon_sc_b = [Quaternions(ekf_q).frame_conv(vec_) for ekf_q, vec_ in zip(channels['q_est'], channels['moon_sc_i'])]
     moon_sc_b = np.asarray(moon_sc_b) / np.linalg.norm(moon_sc_b, axis=1).reshape(-1, 1)
     fig, axes = plt.subplots(nrows=3, ncols=1)
     plt.title("Moon View")

@@ -54,11 +54,13 @@ class RealData:
         jd_end = self.data['jd'].values[-1]
         tle_file = open("data/sat000052191.txt")
         tle_info = tle_file.readlines()
-        tle_epoch = [tle_info_.split(" ")[4] for tle_info_ in tle_info[1::3]]
-        tle_jd = [tle_epoch_to_julian(tle_epoch_) for tle_epoch_ in tle_epoch]
+        tle_1 = [tle_info_ for tle_info_ in tle_info if tle_info_[0] == '1']
+        tle_2 = [tle_info_ for tle_info_ in tle_info if tle_info_[0] == '2']
+        tle_epoch = [tle_info_.split(" ")[4] for tle_info_ in tle_1]
+        tle_jd = np.array([tle_epoch_to_julian(tle_epoch_) for tle_epoch_ in tle_epoch])
         idx_ = np.argmin(np.abs(tle_jd - jd_init))
-        line1 = tle_info[1::3][idx_]
-        line2 = tle_info[2::3][idx_]
+        line1 = tle_1[idx_]
+        line2 = tle_2[idx_]
         print(line1, line2)
         return line1, line2
 
