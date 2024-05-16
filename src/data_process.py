@@ -104,7 +104,13 @@ class RealData:
                 scale = self.get_full_D(x_non_sol[3:])
                 self.data[['mag_x', 'mag_y', 'mag_z']] = np.matmul(self.data[['mag_x', 'mag_y', 'mag_z']],
                                                                    (np.eye(3) + scale)) - bias
+
+
+
+        #test
+
     #test 3
+
     def set_window_time(self, start_str=None, stop_str=None, format_time=None):
         if start_str is None and stop_str is None and format_time is None:
             self.plot_dendrogram_time()
