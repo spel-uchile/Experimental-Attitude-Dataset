@@ -391,6 +391,29 @@ if __name__ == '__main__':
     axes[2].grid()
     axes[2].legend()
     axes[2].set_xlabel("step")
+
+    # testing groundtrack mag ************************************
+    print("ola")
+    folders = ["20230904", "20240204", "20240803"] #, "20240804"]
+    files = ["gyros-S3-040923.xlsx", "S3-gyros-08032024.xlsx", "S3-gyros-08032024_2.xlsx" ]
+    aux_path = "./data/"
+
+    """"
+    for i, x in enumerate(folders):
+        print(x)
+        aux_sensors = RealData(aux_path+x+'/', files[i])
+        aux_sensors.calibrate_mag(mag_i=channels['mag_i'])
+        if i == len(folders):
+            aux_sensors.plot_magnetic_field_groundtrack(np.linalg.norm(sensors.data[['mag_x', 'mag_y', 'mag_z']], axis=1), show=True)
+        else:
+            aux_sensors.plot_magnetic_field_groundtrack(np.linalg.norm(sensors.data[['mag_x', 'mag_y', 'mag_z']], axis=1), show=False)
+    """
+
+    sensors.calibrate_mag(mag_i=channels['mag_i'])
+    sensors.plot_magnetic_field_groundtrack(np.linalg.norm(sensors.data[['mag_x', 'mag_y', 'mag_z']], axis=1),
+                                                show=True)
+    # testing groundtrack mag ************************************
+
     if EKF_SETUP == 'FULL':
         monitor.plot(x_dataset='full_time', y_dataset='scale')
         monitor.plot(x_dataset='full_time', y_dataset='ku')

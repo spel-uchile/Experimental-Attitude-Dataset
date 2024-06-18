@@ -15,6 +15,13 @@ import json
 import os
 from sklearn.cluster import KMeans
 
+# *** add import for plot magnetic field groundtrack
+from astropy import time
+from skyfield.api import EarthSatellite, load, wgs84
+from mpl_toolkits.basemap import Basemap
+
+
+
 ts2022 = 1640995200 / 86400  # day
 jd2022 = 2459580.50000
 
@@ -105,11 +112,48 @@ class RealData:
                 self.data[['mag_x', 'mag_y', 'mag_z']] = np.matmul(self.data[['mag_x', 'mag_y', 'mag_z']],
                                                                    (np.eye(3) + scale)) - bias
 
+    def plot_magnetic_field_groundtrack(self, norm_mag,  show: bool = False, only_add_plots: bool = False):
+        line1, line2 = self.search_nearly_tle()
+        satellite_sky = EarthSatellite(line1, line2)
+        timestamp = np.array(self.data["timestamp"].values)
+        timestamp = np.asarray(timestamp, dtype='datetime64[s]')
+        timestamp = np.asarray(timestamp, dtype='str')
+        timestamp = np.char.replace(timestamp, 'T', ' ')
+        timestamp_astropy = time.Time(timestamp, format='iso', scale='utc')
+        t0_str = timestamp_astropy[0].value[0:-4]
+        ts = load.timescale()
+        t = ts.from_astropy(timestamp_astropy)
+        geocentric = satellite_sky.at(t)
+        lat, long = wgs84.latlon_of(geocentric)
+        lat = lat.degrees
+        long = long.degrees
+
+        if not only_add_plots:
+            #print("dentro de if not")
+            #with plt.ioff():
+            fig = plt.figure(figsize=(10, 6))
+            ax = fig.add_subplot(1, 1, 1)
+            ax.set_title('GroundTrack SUCHAI-3')
+            m = Basemap(projection='mill', llcrnrlat=-80, urcrnrlat=90, llcrnrlon=-180, urcrnrlon=180, resolution='c')
+            m.shadedrelief(scale=0.2)
+            m.drawcountries(color='#303338')
+            m.drawparallels(np.arange(-90., 91., 20.), labels=[True, False, False, True]) # parallels
+            m.drawmeridians(np.arange(-180., 181., 40.), labels=[True, False, False, True]) # meridians
+            m.scatter(-70.66199140405035, -33.457997171552776, marker='o', color='r', zorder=10, latlon=True,
+                      label="GroundStation - SPEL")
+
+            m.scatter(long, lat, c=norm_mag, s=50, alpha=0.8, latlon=True, label="groundtrack "+t0_str)
+            cbar = plt.colorbar(ax=ax, shrink=0.885)
+            cbar.set_label('Magnitude magnetic field [mG]', rotation=270, labelpad=20)
+            plt.legend()
+            #disconnect_zoom = zoom_factory(ax)
+            #pan_handler = panhandler(fig)
+            #display(fig.canvas)
+            plt.show() if show else None
+        else:
+            m.scatter(long, lat, c=norm_mag, s=50, alpha=0.8, latlon=True, label="groundtrack ")
 
 
-        #test
-
-    #test 3
 
     def set_window_time(self, start_str=None, stop_str=None, format_time=None):
         if start_str is None and stop_str is None and format_time is None:
