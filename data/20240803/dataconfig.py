@@ -3,7 +3,7 @@ Created by Elias Obreque
 Date: 17-10-2023
 email: els.obrq@gmail.com
 """
-
+FORCE_CALCULATION = False
 OBC_DATA = "obc-20240322.xlsx"
 VIDEO_DATA = None # reference unit time
 VIDEO_TIME_LAST_FRAME = None

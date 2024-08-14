@@ -5,6 +5,7 @@ email: els.obrq@gmail.com
 """
 import matplotlib.pyplot as plt
 from scipy.cluster.hierarchy import dendrogram
+from scipy.optimize import fsolve
 from sklearn.cluster import AgglomerativeClustering
 from tools.mathtools import *
 from tools.two_step_mag_calibration import two_step
@@ -30,10 +31,20 @@ class RealData:
         self.data.reset_index(inplace=True)
         self.data['jd'] = [timestamp_to_julian(float(ts)) for ts in self.data['timestamp'].values]
         self.data[['acc_x', 'acc_y', 'acc_z']] *= np.deg2rad(1)
+        self.start_time = 0.
+        self.end_time = 0.
 
     def create_datetime_from_timestamp(self, time_format):
         self.data['DateTime'] = [datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc).strftime(time_format)
                                  for ts in self.data['timestamp']]
+
+    def set_gyro_bias(self, gx, gy, gz, unit='deg'):
+        if unit == 'deg':
+            gx = gx * np.pi / 180
+            gy = gy * np.pi / 180
+            gz = gz * np.pi / 180
+
+        self.data[['acc_x', 'acc_y', 'acc_z']] += np.array([gx, gy, gz])
 
     def plot_key(self, to_plot: list, show: bool = False, **kwargs):
         for key, value in kwargs.items():
@@ -101,7 +112,7 @@ class RealData:
                     f.close()
                 print(x_non_sol, sig3_non, x_lin_sol, sig3_lin)
                 bias = x_non_sol[:3]
-                scale = self.get_full_D(x_non_sol[3:])
+                scale = get_full_D(x_non_sol[3:])
                 self.data[['mag_x', 'mag_y', 'mag_z']] = np.matmul(self.data[['mag_x', 'mag_y', 'mag_z']],
                                                                    (np.eye(3) + scale)) - bias
 
@@ -113,6 +124,8 @@ class RealData:
             selected_cluster = int(input("Set the number of cluster to set window time: "))
             temp = np.argwhere(model.labels_ == selected_cluster)
             self.data = self.data.iloc[list(temp.T)[0]]
+            self.start_time = self.data['jd'].values[0]
+            self.end_time = self.data['jd'].values[-1]
         else:
             init = datetime.datetime.strptime(start_str, format_time)
             stop = datetime.datetime.strptime(stop_str, format_time)
@@ -120,6 +133,24 @@ class RealData:
             stop = stop.replace(tzinfo=datetime.timezone.utc).timestamp()
             temp = np.argwhere((init <= self.data['timestamp']) & (self.data['timestamp'] <= stop))
             self.data = self.data.iloc[list(temp.T)[0]]
+            self.start_time = self.data['jd'].values[0]
+            self.end_time = timestamp_to_julian(stop)
+
+    def estimate_inertia_matrix(self, guess=None):
+        if guess is None:
+            guess = np.array([0.03, 0.03, 0.03, 0, 0, 0])
+        omega = self.data[['acc_x', 'acc_y', 'acc_z']].values
+        dt_ = np.diff(self.data['timestamp'].values)
+        acc = np.diff(omega, axis=0) / np.atleast_2d(dt_).T
+
+        def f_c(inertia_):
+            inertia_ = get_full_D(inertia_)
+            error_ = [inertia_.reshape(3, 3) @ a_ + np.cross(w_, inertia_.reshape(3, 3) @ a_) for w_, a_ in zip(omega[:-1], acc)]
+            vec_3 = np.mean(error_, axis=0)
+            return np.array([*vec_3, *vec_3])
+
+        sol = fsolve(f_c, guess)
+        return sol
 
     def plot_dendrogram_time(self, timestamp_distance: float = 3600):
         """
@@ -146,21 +177,20 @@ class RealData:
             print(f"Cluster {i}: Start: {temp[0]} - Stop: {temp[-1]}")
         return model
 
-    @staticmethod
-    def get_full_D(d_vector):
-        d_ = np.zeros((3, 3))
-        d_[0, 0] = d_vector[0]
-        d_[1, 1] = d_vector[1]
-        d_[2, 2] = d_vector[2]
+def get_full_D(d_vector):
+    d_ = np.zeros((3, 3))
+    d_[0, 0] = d_vector[0]
+    d_[1, 1] = d_vector[1]
+    d_[2, 2] = d_vector[2]
 
-        d_[0, 1] = d_vector[3]
-        d_[0, 2] = d_vector[4]
-        d_[1, 0] = d_vector[3]
-        d_[2, 0] = d_vector[4]
+    d_[0, 1] = d_vector[3]
+    d_[0, 2] = d_vector[4]
+    d_[1, 0] = d_vector[3]
+    d_[2, 0] = d_vector[4]
 
-        d_[1, 2] = d_vector[5]
-        d_[2, 1] = d_vector[5]
-        return d_
+    d_[1, 2] = d_vector[5]
+    d_[2, 1] = d_vector[5]
+    return d_
 
 
 def plot_dendrogram(model, **kwargs):

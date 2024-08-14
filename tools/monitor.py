@@ -135,7 +135,7 @@ class Monitor3d:
 
         # reset earth
         self.plotter3d.subplot(0, 1)
-        self.plotter3d.add_text(self.date_time[0], font_size=15, position='lower_left', name='text', color='yellow')
+        self.plotter3d.add_text(self.date_time[0], font_size=15, position='lower_right', name='text', color='yellow')
         self.plotter3d.set_background(color='black')
         self.plotter3d.add_mesh(self.earth3d, texture=texture)  # , color='#0C007C')
         self._last_focal = (0, 1, 0)
@@ -143,7 +143,7 @@ class Monitor3d:
         self.plotter3d.subplot(0, 0)
         self.earth3d.rotate_z(180, inplace=True)
         self.update(0)
-        self.plotter3d.add_slider_widget(self.update, [0, len(self.sat_pos) - 1], value=0, title='Step')
+        self.plotter3d.add_slider_widget(self.update, [0, len(self.sat_pos) - 1], value=0, title='Step', color='white')
         self.btn = self.plotter3d.add_checkbox_button_widget(self.forward, value=False)
 
     def update_windows(self):
@@ -222,10 +222,12 @@ class Monitor3d:
         # self.camera_rpi.focal_point = dir_vec
         self.plotter3d.subplot(0, 1)
         self.plotter3d.remove_actor('text')
-        self.plotter3d.add_text(self.date_time[index_], font_size=15, name='text', color='yellow', position='lower_left')
+        self.plotter3d.add_text(self.date_time[index_], font_size=15, name='text', color='yellow', position='lower_right')
         self.plotter3d.camera_position = [sc_pos_i,
                                           dir_vec,
                                           -dir_z]
+        # self.plotter3d.camera.clipping_range = (0., 80000)
+        self.plotter3d.camera.view_angle = 60.0
         #self.plotter3d.camera.roll = np.arccos(np.dot(-dir_z, np.array([0, -1, 0]))) * 180 / np.pi
         # self.plotter3d.camera.up = (0, 0, 1)
         # self.plotter3d.camera.view_angle = 48.8

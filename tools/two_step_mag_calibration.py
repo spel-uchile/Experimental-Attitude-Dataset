@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 
 def two_step(bm_, ar_):
     # Monte Carlo Runs
-    num_mc = 5000
+    num_mc = 500
     m = len(ar_)
     i100 = 0
     x_lin = np.zeros((num_mc, 9))
@@ -129,21 +129,52 @@ def two_step(bm_, ar_):
     return x_non_sol, sig3_non, x_lin_sol, sig3_lin
 
 
-if __name__ == '__main__':
+def get_full_D(d_vector):
+    d_ = np.zeros((3, 3))
+    d_[0, 0] = d_vector[0]
+    d_[1, 1] = d_vector[1]
+    d_[2, 2] = d_vector[2]
 
+    d_[0, 1] = d_vector[3]
+    d_[0, 2] = d_vector[4]
+    d_[1, 0] = d_vector[3]
+    d_[2, 0] = d_vector[4]
+
+    d_[1, 2] = d_vector[5]
+    d_[2, 1] = d_vector[5]
+    return d_
+
+
+if __name__ == '__main__':
+    import pandas as pd
     dt = 10
-    trmm_data = scipy.io.loadmat('trmm_data.mat')
-    mag_i = trmm_data['mag_i']
+    # trmm_data = scipy.io.loadmat('trmm_data.mat')
+    mag_i = np.array([-15.3305, 13.1064, -49.9973])# trmm_data['mag_i']
 
     t = np.arange(0, 28801, dt)
     m = len(t)
     ar = mag_i / 10
-    ctrue = np.array([.5, .3, .6]) * 10
-    sigm = 0.05
-    d = np.array([[0.05, 0.05, 0.05], [0.05, 0.1, 0.05], [0.05, 0.05, 0.05]])
+    #ctrue = np.array([.5, .3, .6]) * 10
+    sigm = 10
+    # d = np.array([[0.05, 0.05, 0.05], [0.05, 0.1, 0.05], [0.05, 0.05, 0.05]])
 
     # Measurements
-    bm = (ar + np.kron(ctrue, np.ones((m, 1))) + sigm * np.random.randn(m, 3)) @ np.linalg.inv(np.eye(3) + d).T
-    x_non_sol, sig3_non, x_lin_sol, sig3_lin = two_step(bm, ar)
+    # bm = (ar + np.kron(ctrue, np.ones((m, 1))) + sigm * np.random.randn(m, 3)) @ np.linalg.inv(np.eye(3) + d).T
+    bm = pd.read_csv('../sandbox/mag_calibration_montecarlo_rw_off.csv', decimal=',', sep=';')
+    bm = bm[['real_data_x', 'real_data_y', 'real_data_z']].values[1000:-1000:]
+
+    plt.figure()
+    plt.plot(bm)
+    plt.show()
+
+    mag_i = np.array([[-15.3305, 13.1064, -49.9973] for _ in range(len(bm))])
+    x_non_sol, sig3_non, x_lin_sol, sig3_lin = two_step(bm, mag_i)
     print(x_non_sol, sig3_non)
-    print(x_lin_sol, sig3_lin)
+
+    bias = x_non_sol[:3]
+    scale = get_full_D(x_non_sol[3:])
+
+    mag_cal = np.matmul(bm, (np.eye(3) + scale)) - bias
+    plt.figure()
+    plt.plot(mag_cal)
+    plt.show()

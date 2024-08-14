@@ -13,6 +13,7 @@ class MagEnv(object):
         self.Mag_i = np.zeros(3)
         self.Mag_b = np.zeros(3)
         self.Mag_e = np.zeros(3)
+        self.mag_ned = np.zeros(3)
 
     def update(self, lat, lon, alt, decyear, sideral, q_i2b):
         self.calc_mag(decyear, sideral, lat, lon, alt)
@@ -25,17 +26,19 @@ class MagEnv(object):
                = distance from centre of Earth in km if itype = 2 (>3485 km)
         """
         decyear = jd_to_decyear(julian_date)
-        x, y, z, f, gccolat = calculate_igrf(0, decyear, alt, lat, lon, itype=1)
+        x, y, z, f, gccolat = calculate_igrf(0, decyear, alt, lat, lon % (2 * np.pi), itype=1)
         mag_local = [x, y, z]
-
+        self.mag_ned = np.array(mag_local)
         self.mag_NED_to_ECI(mag_local, gccolat, lon, sideral)
-        return self.Mag_i, np.array(mag_local)
+        return self.Mag_i, self.Mag_e, self.mag_ned
 
     def add_mag_noise(self):
         return
 
-    def mag_NED_to_ECI(self, mag_0, theta, lonrad, gmst):
-        mag_local_0y = rotationY(mag_0, np.pi - theta)
+    def mag_NED_to_ECI(self, mag_0, colat, lonrad, gmst):
+        # theta: Geocentric Colatitud (90 - lat)
+        # lat = np.pi/2 - colat
+        mag_local_0y = rotationY(mag_0, np.pi - colat)  # pi/2 + lat
         mag_local_yz = rotationZ(mag_local_0y, -lonrad)
         self.Mag_e = mag_local_yz
         self.Mag_i = rotationZ(mag_local_yz, -gmst)
@@ -48,6 +51,7 @@ class MagEnv(object):
 
 
 def rotationY(bfr, theta):
+    # frame rotation
     temp = np.zeros(3)
     temp[0] = np.cos(theta)*bfr[0] - np.sin(theta)*bfr[2]
     temp[1] = bfr[1]

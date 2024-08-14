@@ -61,17 +61,18 @@ class PSO:
 
 
 class PSOStandard(PSO):
-    def __init__(self, func, n_particles=100, n_steps=200, parameters=(0.8, 0.01, 1.2, 1.5)):
+    def __init__(self, func, n_particles=100, n_steps=200, parameters=(0.8, 0.01, 1.5, 1.1)):
         super().__init__(func, n_particles, n_steps, parameters)
 
-    def optimize(self, clip=True):
+    def optimize(self, clip=True, args=()):
         iteration = 0
         W = self.w1
         min_state = None
         while iteration < self.max_iteration:
             self.historical_position.append(self.position.copy())
             pool = multiprocessing.Pool(processes=NCORE)
-            result = pool.map(self.fitness_function, self.position)
+            zip_var = [[p_, args[0], args[1]] for p_ in self.position]
+            result = pool.map(self.fitness_function, zip_var)
             pool.close()
             # result = self.iterative_evaluation()
             fitness = np.array([elem[0] for elem in result])

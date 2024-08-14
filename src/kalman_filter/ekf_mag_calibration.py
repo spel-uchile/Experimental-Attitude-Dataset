@@ -45,13 +45,13 @@ def sigma_2(x_est_, r_cov_sensor, B_k):
 
 class MagUKF():
     # Unscented Filter Formulation
-    def __init__(self, alpha=0.1, beta=2):
-        self.x_est = np.zeros(9)
+    def __init__(self, alpha=0.1, beta=2, x_dim=9):
+        self.x_est = np.zeros(x_dim)
 
         b_est_std = np.ones(3) * 50
         d_est_std = np.ones(6) * 1e-2
         sensor_noise = .1
-        self.dim_x = 9
+        self.dim_x = x_dim
         self.dim_v = 0
         self.dim_n = 0
         self.full_dim = self.dim_x + self.dim_v + self.dim_n
@@ -59,6 +59,7 @@ class MagUKF():
         self.flag = False
         self.pCov_zero = self.pCov_x.copy() * 0.5
         self.fisher_matrix = np.diag([*b_est_std, *d_est_std])
+        self.q_matrix = np.diag([1, 1, 1, 1e-3, 1e-3, 1e-3, 1e-5, 1e-5, 1e-5]) * 0.01
         # self.pCov_v = np.diag(np.zeros(0))  # process covariance
         # self.pCov_n = np.diag(np.zeros(0))  # measurement covariance
         # fill matrix with diagonal
@@ -109,7 +110,7 @@ class MagUKF():
         #         else:#if abs(self.historical['error'][-1]) <= error_down and self.flag:
         #             self.flag = False
 
-        current_x = self.x_est.copy()
+        current_x = self.x_est.copy() # + np.random.normal(0, scale=[1, 1, 1, 1e-6, 1e-6, 1e-6, 1e-8, 1e-8, 1e-8]) * 1e-1
 
         self.lamda = self.alpha ** 2 * (self.n + self.kappa) - self.n
         self.gamma = np.sqrt(self.n + self.lamda)
@@ -133,19 +134,18 @@ class MagUKF():
         sig2 = sigma_2(x_k, cov_sensor_, sensor_)
 
         p_xz = self.get_cross_correlation_matrix(sigma_points, x_k, error_model_mean, error_y_direct)
-        p_zz = self.get_output_covariance(sigma_points, x_k, error_model_mean, error_y_direct)
-        p_zz_inv = np.linalg.inv(p_zz + sig2)
+        p_zz = self.get_output_covariance(sigma_points, x_k, error_model_mean, error_y_direct) + sig2
+        p_zz_inv = np.linalg.inv(p_zz)
         # correction
         kk_ = np.dot(p_xz, p_zz_inv)
         # self.corr = kk_ @ np.atleast_1d(error_)
         self.x_est = x_k + kk_ @ np.atleast_1d(error_)
         # self.x_est[3:] = np.maximum(self.x_est[3:], 0)
-        self.pCov_x = p_cov_x - kk_ @ (p_zz + sig2) @ kk_.T
+        self.pCov_x = p_cov_x - kk_ @ p_zz @ kk_.T
         if len(self.historical['error']) > 0 and error_up is not None and error_down is not None:
             if abs(error_) > error_up and not self.flag:
                 # self.pCov_x[:3, :3] = self.pCov_zero[:3, :3]
                 self.pCov_x = self.pCov_zero
-
                 self.flag = True
                 print("After:", error_)
             elif abs(error_) <= error_down and self.flag:
@@ -240,9 +240,10 @@ class MagUKF():
 
         plt.figure()
         plt.title("Covariance P - UKF")
-        plt.grid()
         plt.plot(self.historical['P'])
         plt.xlabel("Step")
+        plt.yscale('log')
+        plt.grid()
         # bias and D legend
         plt.legend(["bx", "by", "bz", "Dxx", "Dyy", "Dzz", "Dxy", "Dxz", "Dyz"])
 
@@ -313,6 +314,7 @@ class MagEKF():
         plt.title("Covariance P - EKF")
         plt.grid()
         plt.xlabel("Step")
+        plt.yscale('log')
         plt.plot(self.historical['P'])
         # bias and D legend
         plt.legend(["bx", "by", "bz", "Dxx", "Dyy", "Dzz", "Dxy", "Dxz", "Dyz"])
@@ -459,8 +461,8 @@ if __name__ == '__main__':
 
     np.random.seed(42)
 
-    b_est = np.array([1, 1, 1]) * 100
-    D_est = np.array([1.1, 1.2, 1.3, 0.001, 0.002, 0.003]) * 1e-7
+    b_est = np.array([1, 1, 1]) * 150
+    D_est = np.array([1.1, 1.2, 1.3, 0.001, 0.002, 0.003]) * 1e-8
     #    D_est[3:] *= 1e-5
     P_est = np.diag([*b_est, *D_est]) # (uT)^2
     # P_est = np.identity(9) * 1e-2

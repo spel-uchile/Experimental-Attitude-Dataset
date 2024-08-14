@@ -18,9 +18,8 @@ from src.kalman_filter.ukf_propagation import UKF
 from src.kalman_filter.ekf_full import MEKF_FULL
 from src.kalman_filter.ekf_mag_calibration import MagUKF
 from src.data_process import RealData
-from src.dynamics.dynamics_kinematics import *
 from src.dynamics.Quaternion import Quaternions
-from src.dynamics.MagEnv import MagEnv
+from src.dynamics.dynamics_kinematics import Dynamics, calc_quaternion, calc_omega_b, shadow_zone
 
 from tools.get_video_frame import save_frame
 from tools.get_point_vector_from_picture import get_vector
@@ -29,8 +28,8 @@ from tools.mathtools import julian_to_datetime
 import importlib.util
 
 # CONFIG
+# PROJECT_FOLDER = "./data/20240804/"
 PROJECT_FOLDER = "./data/20230904/"
-# PROJECT_FOLDER = "./data/20230904/"
 module_name = "dataconfig"
 
 # Cargamos el módulo desde la ruta
@@ -38,11 +37,13 @@ spec = importlib.util.spec_from_file_location(module_name, PROJECT_FOLDER + modu
 myconfig = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(myconfig)
 
+FORCE_CALCULATION = myconfig.FORCE_CALCULATION
 CREATE_FRAME = myconfig.CREATE_FRAME
 VIDEO_DATA = myconfig.VIDEO_DATA
 VIDEO_TIME_LAST_FRAME = myconfig.VIDEO_TIME_LAST_FRAME
 GET_VECTOR_FROM_PICTURE = myconfig.GET_VECTOR_FROM_PICTURE
 OBC_DATA = myconfig.OBC_DATA
+OBC_DATA_STEP = myconfig.OBC_DATA_STEP
 TIME_FORMAT = myconfig.TIME_FORMAT
 WINDOW_TIME = myconfig.WINDOW_TIME
 ONLINE_MAG_CALIBRATION = myconfig.ONLINE_MAG_CALIBRATION
@@ -50,28 +51,12 @@ EKF_SETUP = myconfig.EKF_SETUP
 IMAGEN_DATA = myconfig.IMAGEN_DATA
 
 if __name__ == '__main__':
-    if CREATE_FRAME and VIDEO_DATA is not None:
-        save_frame(PROJECT_FOLDER, VIDEO_DATA)
-
-    if GET_VECTOR_FROM_PICTURE:
-        height = 440
-        list_file = [elem for elem in os.listdir(PROJECT_FOLDER + VIDEO_DATA.split('.')[0]) if 'png' in elem]
-        num_list = [int(elem.split(".")[0].replace("frame", "")) for elem in list_file if 'png' in elem]
-        datalist = pd.DataFrame({'filename': list_file, 'id': num_list})
-        datalist.sort_values(by='id', inplace=True)
-        fourcc = cv2.VideoWriter_fourcc(*'XVID')
-        video_salida = cv2.VideoWriter(PROJECT_FOLDER + "att_.avi", fourcc, 10.0, (100, 100))
-        for filename in datalist['filename'].values:
-            edge_, img_cv2_, p_, r_ = get_vector(PROJECT_FOLDER + VIDEO_DATA.split('.')[0] + "/" + filename, height)
-            if img_cv2_ is not None:
-                video_salida.write(img_cv2_)
-                print("added")
-        video_salida.release()
-
     # create data with datetime, and near tle
     sensors = RealData(PROJECT_FOLDER, OBC_DATA)
+    sensors.set_gyro_bias(-3.846, 0.1717, -0.6937, unit='deg')
     sensors.create_datetime_from_timestamp(TIME_FORMAT)
-
+    inertia = np.array([38478.678, 38528.678, 6873.717, 0, 0, 0]) * 1e-6
+    # sensors.estimate_inertia_matrix(guess=inertia)
     # show window time
     if WINDOW_TIME['FLAG']:
         sensors.set_window_time(WINDOW_TIME['Start'], WINDOW_TIME['Stop'], TIME_FORMAT)
@@ -80,76 +65,66 @@ if __name__ == '__main__':
     line1, line2 = sensors.search_nearly_tle()
     print(line1, line2)
     # TIME
-    dt = WINDOW_TIME['STEP']
+    dt_obc = OBC_DATA_STEP
+    dt_sim = WINDOW_TIME['STEP']
     start_datetime = datetime.datetime.strptime(WINDOW_TIME['Start'], TIME_FORMAT)
     stop_datetime = datetime.datetime.strptime(WINDOW_TIME['Stop'], TIME_FORMAT)
     print(start_datetime.timestamp(), stop_datetime.timestamp())
-    # SIMULATION
-    current_time = 0
-    c_jd = sensors.data['jd'].values[0]
-    tend = stop_datetime.timestamp() - start_datetime.timestamp()
 
+    # SIMULATION
     # if not exist file channels
-    if os.path.exists(PROJECT_FOLDER + "channels.p"):
+    time_vector = sensors.data['jd'].values
+    dynamic_orbital = Dynamics(time_vector, line1, line2)
+    if os.path.exists(PROJECT_FOLDER + "channels.p") and not FORCE_CALCULATION:
         with open(PROJECT_FOLDER + "channels.p", 'rb') as fp:
             channels = pickle.load(fp)
+        dynamic_orbital.load_data(channels)
+        dynamic_orbital.calc_mag()
     else:
         # Inertial Parameters
-        mag_model = MagEnv()
-        time_vector = sensors.data['jd'].values
-        sat_state = np.asarray([calc_sat_pos_i(line1, line2, cj) for cj in time_vector])
-        sat_pos = sat_state[:, 0, :]
-        sat_vel = sat_state[:, 1, :]
-        sun_pos = np.asarray([calc_sun_pos_i(c_j) for c_j in time_vector])
-        moon_pos = np.asarray([calc_moon_pos_i(c_j) for c_j in time_vector])
-        sat_lla = np.asarray([calc_geod_lat_lon_alt(sat_pos_, cj) for sat_pos_, cj in zip(sat_pos, time_vector)])
-        lat, lon, alt, sideral = sat_lla[:, 0], sat_lla[:, 1], sat_lla[:, 2], sat_lla[:, 3]
-        mag_i_e = np.asarray([mag_model.calc_mag(c_j, s_, lat_, lon_, alt_)
-                              for c_j, s_, lat_, lon_, alt_ in zip(time_vector, sideral, lat, lon, alt)])
-        sun_sc_i = sun_pos - sat_pos
-        moon_sc_i = moon_pos - sat_pos
-        mag_i = mag_i_e[:, 0, :] * 0.01  # nT to mG
-        mag_ned = mag_i_e[:, 1, :] * 0.01  # nT to mG
-
-        channels = {'full_time': time_vector,
-                    'sim_time': [current_time],
-                    'sat_pos_i': sat_pos,
-                    'lonlat': np.array([lon, lat]).T * RAD2DEG,
-                    'sat_vel_i': sat_vel,
-                    'q_i2b_pred': [],
-                    'omega_b_pred': [],
-                    'time_pred': [],
-                    'mag_i': mag_i,
-                    'mag_ned': mag_ned,
-                    'sun_i': sun_pos,
-                    'sun_sc_i': sun_sc_i,
-                    'moon_sc_i': moon_sc_i,
-                    'sideral': sideral}
+        channels = dynamic_orbital.get_dynamics()
         # save channels as json
         with open(PROJECT_FOLDER + 'channels.p', 'wb') as file_:
             pickle.dump(channels, file_)
 
+    dynamic_orbital.plot_gt()
+    dynamic_orbital.plot_mag()
+
+    # VIDEO
+    if CREATE_FRAME and VIDEO_DATA is not None:
+        save_frame(PROJECT_FOLDER, VIDEO_DATA)
+
+    if GET_VECTOR_FROM_PICTURE:
+        list_file = [elem for elem in os.listdir(PROJECT_FOLDER + VIDEO_DATA.split('.')[0]) if 'png' in elem]
+        num_list = [int(elem.split(".")[0].replace("frame", "")) for elem in list_file if 'png' in elem]
+        datalist = pd.DataFrame({'filename': list_file, 'id': num_list})
+        datalist.sort_values(by='id', inplace=True)
+        fourcc = cv2.VideoWriter_fourcc(*'XVID')
+        video_salida = cv2.VideoWriter(PROJECT_FOLDER + "att_.avi", fourcc, 10.0, (100, 100))
+        for filename in datalist['filename'].values:
+            height =0
+            edge_, img_cv2_, p_, r_ = get_vector(PROJECT_FOLDER + VIDEO_DATA.split('.')[0] + "/" + filename, height)
+            if img_cv2_ is not None:
+                video_salida.write(img_cv2_)
+                print("added")
+        video_salida.release()
+
     Imax = 930
     pred_step_sec = 60
 
-    if os.path.exists(PROJECT_FOLDER + "kf_results.p"):
+    if os.path.exists(PROJECT_FOLDER + "kf_results.p") and not FORCE_CALCULATION:
         with open(PROJECT_FOLDER + "kf_results.p", 'rb') as fp:
             ekf_channels = pickle.load(fp)
-    else:
+        sensors.calibrate_mag(mag_i=channels['mag_i'])
+
         plt.figure()
         plt.plot(channels['full_time'], channels['mag_i'][:, 0], 'o-', color='blue', label='mag_x [mG]')
         plt.plot(channels['full_time'], channels['mag_i'][:, 1], 'o-', color='orange', label='mag_y [mG]')
         plt.plot(channels['full_time'], channels['mag_i'][:, 2], 'o-', color='green', label='mag_z [mG]')
         plt.grid()
         plt.legend()
-        sensors.plot_key(['mag_x', 'mag_y', 'mag_z'], color=['blue', 'orange', 'green'],
-                         label=['x [mG]', 'y [mG]', 'z [mG]'])
-
-        # calibration
-        ekf_mag_cal = None
-        new_sensor = []
+        
         sensors.plot_key(['mag_x', 'mag_y', 'mag_z'], color=['blue', 'orange', 'green'], label=['x [mG]', 'y [mG]', 'z [mG]'])
-        sensors.calibrate_mag(mag_i=channels['mag_i'])
         # sensors.calibrate_mag(mag_i=channels['mag_i'], force=True)
         sensors.plot_key(['mag_x'], color=['blue'], label=['x [mG]'])
         sensors.plot_key(['mag_y'], color=['orange'], label=['y [mG]'])
@@ -165,6 +140,37 @@ if __name__ == '__main__':
         plt.plot(error_mag_ts, label='RMSE: {:2f}'.format(np.sqrt(mse_ts)))
         plt.legend()
         plt.grid()
+        plt.show()
+    else:
+        plt.figure()
+        plt.plot(channels['full_time'], channels['mag_i'][:, 0], 'o-', color='blue', label='mag_x [mG]')
+        plt.plot(channels['full_time'], channels['mag_i'][:, 1], 'o-', color='orange', label='mag_y [mG]')
+        plt.plot(channels['full_time'], channels['mag_i'][:, 2], 'o-', color='green', label='mag_z [mG]')
+        plt.grid()
+        plt.legend()
+        sensors.plot_key(['mag_x', 'mag_y', 'mag_z'], color=['blue', 'orange', 'green'],
+                         label=['x [mG]', 'y [mG]', 'z [mG]'])
+
+        # calibration
+        ekf_mag_cal = None
+        new_sensor = []
+        sensors.plot_key(['mag_x', 'mag_y', 'mag_z'], color=['blue', 'orange', 'green'], label=['x [mG]',
+                                                                                                'y [mG]', 'z [mG]'])
+        sensors.calibrate_mag(mag_i=channels['mag_i'])
+        sensors.plot_key(['mag_x'], color=['blue'], label=['x [mG]'])
+        sensors.plot_key(['mag_y'], color=['orange'], label=['y [mG]'])
+        sensors.plot_key(['mag_z'], color=['green'], label=['z [mG]'])
+        sensors.plot_key(['sun3'], color=['blue'], label=['-x [mA]'])
+        sensors.plot_key(['sun2'], color=['orange'], label=['-y [mA]'])
+        sensors.plot_key(['sun4'], color=['green'], label=['-z [mA]'])
+
+        # error_mag_ts = np.linalg.norm(channels['mag_i'], axis=1) - np.linalg.norm(sensors.data[['mag_x', 'mag_y', 'mag_z']], axis=1)
+        # mse_ts = mean_squared_error(np.linalg.norm(channels['mag_i'], axis=1), np.linalg.norm(sensors.data[['mag_x', 'mag_y', 'mag_z']], axis=1))
+        # plt.figure()
+        # plt.title("Two Step Magnitude Error")
+        # plt.plot(error_mag_ts, label='RMSE: {:2f}'.format(np.sqrt(mse_ts)))
+        # plt.legend()
+        # plt.grid()
 
         if ONLINE_MAG_CALIBRATION:
             ukf = MagUKF(alpha=1)
@@ -178,7 +184,7 @@ if __name__ == '__main__':
             flag_t = True
             for mag_i_, mag_b_ in zip(channels['mag_i'], sensors.data[['mag_x', 'mag_y', 'mag_z']].values):
                 ukf.save()
-                ukf.run(mag_b_, mag_i_, 200, 10000, 100)
+                ukf.run(mag_b_, mag_i_, 10, 10000, 100)
                 bias_, D_scale = ukf.get_calibration()
                 new_sensor_ukf.append((np.eye(3) + D_scale) @ mag_b_ - bias_)
                 stop_k += 1
@@ -200,18 +206,18 @@ if __name__ == '__main__':
             mag_ukf = np.asarray(new_sensor_ukf)
             sensors.data[['mag_x', 'mag_y', 'mag_z']] = mag_ukf
             ukf.plot(np.linalg.norm(mag_ukf, axis=1), np.linalg.norm(channels['mag_i'], axis=1))
-            plt.figure()
-            plt.plot(mag_ukf[:, 0], label='new_mag_x')
-            plt.plot(mag_ukf[:, 1], label='new_mag_y')
-            plt.plot(mag_ukf[:, 2], label='new_mag_z')
-            plt.legend()
-            plt.grid()
-
-            plt.figure()
-            plt.plot(channels['full_time'], channels['mag_i'][:, 0], label='mag_x')
-            plt.plot(channels['full_time'], channels['mag_i'][:, 1], label='mag_y')
-            plt.plot(channels['full_time'], channels['mag_i'][:, 2], label='mag_z')
-            plt.legend()
+            # plt.figure()
+            # plt.plot(mag_ukf[:, 0], label='new_mag_x')
+            # plt.plot(mag_ukf[:, 1], label='new_mag_y')
+            # plt.plot(mag_ukf[:, 2], label='new_mag_z')
+            # plt.legend()
+            # plt.grid()
+            #
+            # plt.figure()
+            # plt.plot(channels['full_time'], channels['mag_i'][:, 0], label='mag_x')
+            # plt.plot(channels['full_time'], channels['mag_i'][:, 1], label='mag_y')
+            # plt.plot(channels['full_time'], channels['mag_i'][:, 2], label='mag_z')
+            # plt.legend()
             plt.show()
         # exit()
         omega_b = sensors.data[['acc_x', 'acc_y', 'acc_z']].values[0]
@@ -221,10 +227,10 @@ if __name__ == '__main__':
 
         if EKF_SETUP == 'NORMAL':
             # MEKF
-            P = np.diag([0.5, 0.5, 0.5, 0.01, 0.01, 0.01])*10
+            P = np.diag([0.5, 0.5, 0.5, 0.01, 0.01, 0.01]) # * 10
             ekf_model = MEKF(inertia, P=P, Q=np.zeros((6, 6)), R=np.zeros((3, 3)))
-            ekf_model.sigma_bias = 1e-4
-            ekf_model.sigma_omega = 1e-5
+            ekf_model.sigma_bias = 1e-6
+            ekf_model.sigma_omega = 1e-7
             ekf_model.current_bias = np.array([0.0, 0.0, 0])
         elif EKF_SETUP == 'FULL':
             # MEKF
@@ -279,14 +285,15 @@ if __name__ == '__main__':
             t0 = t_
             # ukf_model.predict()
             # mag
-            mag_est = ekf_model.inject_vector(body_vec_, mag_ref_, sigma2=200, sensor='mag')
+            mag_est = ekf_model.inject_vector(body_vec_, mag_ref_, sigma2=10, sensor='mag')
 
             # mag_est_ukf = ukf_model.inject_vector(body_vec_, mag_ref_, sigma2=5000, sensor='mag')
             # css
             css_est = np.zeros(3)
             is_dark = shadow_zone(channels['sat_pos_i'][k], channels['sun_i'][k])
-            if not is_dark and np.linalg.norm(css_3_) > 400:
-                css_est = ekf_model.inject_vector(css_3_, sun_sc_i_, gain=-Imax * np.eye(3), sigma2=300, sensor='css')
+            if not is_dark:
+                css_3_[css_3_ < 50] = 0.0
+                css_est = ekf_model.inject_vector(css_3_, sun_sc_i_, gain=-Imax * np.eye(3), sigma2=10, sensor='css')
             ekf_model.save_vector(name='css_est', vector=css_est)
             ekf_model.save_vector(name='mag_est', vector=mag_est)
             ekf_model.save_vector(name='sun_b_est', vector=Quaternions(ekf_model.current_quaternion).frame_conv(sun_sc_i_))
@@ -348,11 +355,18 @@ if __name__ == '__main__':
     monitor.set_quaternion('q_est')
     monitor.set_sideral('sideral')
 
+    sensors.plot_key(['mag_x'], color=['blue'], label=['x [mG]'])
+    sensors.plot_key(['mag_y'], color=['orange'], label=['y [mG]'])
+    sensors.plot_key(['mag_z'], color=['green'], label=['z [mG]'])
+    sensors.plot_key(['sun3'], color=['blue'], label=['-x [mA]'])
+    sensors.plot_key(['sun2'], color=['orange'], label=['-y [mA]'])
+    sensors.plot_key(['sun4'], color=['green'], label=['-z [mA]'])
+
     monitor.add_vector('sun_sc_i', color='yellow')
     monitor.add_vector('mag_i', color='orange')
     monitor.add_vector('moon_sc_i', color='white')
 
-    # monitor.plot(x_dataset='full_time', y_dataset='mag_i')
+    monitor.plot(x_dataset='full_time', y_dataset='mag_i')
     # monitor.plot(x_dataset='full_time', y_dataset='lonlat')
     # monitor.plot(x_dataset='full_time', y_dataset='sun_i_sc')
     # monitor.plot(x_dataset='full_time', y_dataset='sat_pos_i')
@@ -362,7 +376,7 @@ if __name__ == '__main__':
     monitor.plot(x_dataset='full_time', y_dataset='b_est')
     monitor.plot(x_dataset='full_time', y_dataset='q_est')
     monitor.plot(x_dataset='full_time', y_dataset='omega_est')
-    monitor.plot(x_dataset='full_time', y_dataset='mag_est')
+    # monitor.plot(x_dataset='full_time', y_dataset='mag_est')
     monitor.plot(x_dataset='full_time', y_dataset='sun_b_est')
     monitor.plot(x_dataset='full_time', y_dataset='p_cov')
 
