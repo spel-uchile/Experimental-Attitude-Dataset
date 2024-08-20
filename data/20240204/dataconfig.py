@@ -15,7 +15,7 @@ WINDOW_TIME = {'Start': '2024/03/22 15:46:41',
                'FLAG': True}  # if true use the manual time, else use the gyro data time
 TIME_FORMAT = "%Y/%m/%d %H:%M:%S"
 
-ONLINE_MAG_CALIBRATION = False
+ONLINE_MAG_CALIBRATION = True
 CREATE_FRAME = False
 GET_VECTOR_FROM_PICTURE = False
 EKF_SETUP = 'NORMAL'

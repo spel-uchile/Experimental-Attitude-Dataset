@@ -112,7 +112,8 @@ class RealData:
                 self.data[['mag_x', 'mag_y', 'mag_z']] = np.matmul(self.data[['mag_x', 'mag_y', 'mag_z']],
                                                                    (np.eye(3) + scale)) - bias
 
-    def plot_magnetic_field_groundtrack(self, norm_mag,  show: bool = False, only_add_plots: bool = False):
+    def plot_magnetic_field_groundtrack(self, norm_mag,  show: bool = False, only_add_plots: bool = False, basemap=None):
+
         line1, line2 = self.search_nearly_tle()
         satellite_sky = EarthSatellite(line1, line2)
         timestamp = np.array(self.data["timestamp"].values)
@@ -146,12 +147,16 @@ class RealData:
             cbar = plt.colorbar(ax=ax, shrink=0.885)
             cbar.set_label('Magnitude magnetic field [mG]', rotation=270, labelpad=20)
             plt.legend()
+
+
             #disconnect_zoom = zoom_factory(ax)
             #pan_handler = panhandler(fig)
             #display(fig.canvas)
             plt.show() if show else None
+            return m
         else:
-            m.scatter(long, lat, c=norm_mag, s=50, alpha=0.8, latlon=True, label="groundtrack ")
+            basemap.scatter(long, lat, c=norm_mag, s=50, alpha=0.8, latlon=True, label="groundtrack "+t0_str)
+            return basemap
 
 
 

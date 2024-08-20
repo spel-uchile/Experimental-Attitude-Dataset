@@ -394,24 +394,57 @@ if __name__ == '__main__':
 
     # testing groundtrack mag ************************************
     print("ola")
-    folders = ["20230904", "20240204", "20240803"] #, "20240804"]
-    files = ["gyros-S3-040923.xlsx", "S3-gyros-08032024.xlsx", "S3-gyros-08032024_2.xlsx" ]
+    folders = ["20230904", "20240803", "20240204"]
+    files = ["gyros-S3-040923.xlsx", "obc-20240322.xlsx", "obc_data.xlsx"]
     aux_path = "./data/"
 
-    """"
-    for i, x in enumerate(folders):
-        print(x)
-        aux_sensors = RealData(aux_path+x+'/', files[i])
-        aux_sensors.calibrate_mag(mag_i=channels['mag_i'])
-        if i == len(folders):
-            aux_sensors.plot_magnetic_field_groundtrack(np.linalg.norm(sensors.data[['mag_x', 'mag_y', 'mag_z']], axis=1), show=True)
-        else:
-            aux_sensors.plot_magnetic_field_groundtrack(np.linalg.norm(sensors.data[['mag_x', 'mag_y', 'mag_z']], axis=1), show=False)
-    """
 
-    sensors.calibrate_mag(mag_i=channels['mag_i'])
-    sensors.plot_magnetic_field_groundtrack(np.linalg.norm(sensors.data[['mag_x', 'mag_y', 'mag_z']], axis=1),
-                                                show=True)
+    for i, x in enumerate(folders):
+        print(i, x)
+        aux_sensors = RealData(aux_path+x+'/', files[i])
+
+        c_jd = aux_sensors.data['jd'].values[0]
+        mag_model_aux = MagEnv()
+        time_vector = aux_sensors.data['jd'].values
+        sat_state = np.asarray([calc_sat_pos_i(line1, line2, cj) for cj in time_vector])
+        sat_pos = sat_state[:, 0, :]
+        sat_vel = sat_state[:, 1, :]
+        sun_pos = np.asarray([calc_sun_pos_i(c_j) for c_j in time_vector])
+        moon_pos = np.asarray([calc_moon_pos_i(c_j) for c_j in time_vector])
+        sat_lla = np.asarray([calc_geod_lat_lon_alt(sat_pos_, cj) for sat_pos_, cj in zip(sat_pos, time_vector)])
+        lat, lon, alt, sideral = sat_lla[:, 0], sat_lla[:, 1], sat_lla[:, 2], sat_lla[:, 3]
+        mag_i_e = np.asarray([mag_model_aux.calc_mag(c_j, s_, lat_, lon_, alt_)
+                              for c_j, s_, lat_, lon_, alt_ in zip(time_vector, sideral, lat, lon, alt)])
+        sun_sc_i = sun_pos - sat_pos
+        moon_sc_i = moon_pos - sat_pos
+        mag_i = mag_i_e[:, 0, :] * 0.01  # nT to mG
+        mag_ned = mag_i_e[:, 1, :] * 0.01  # nT to mG
+
+        channels_aux = {'full_time': time_vector,
+                    'sim_time': [current_time],
+                    'sat_pos_i': sat_pos,
+                    'lonlat': np.array([lon, lat]).T * RAD2DEG,
+                    'sat_vel_i': sat_vel,
+                    'q_i2b_pred': [],
+                    'omega_b_pred': [],
+                    'time_pred': [],
+                    'mag_i': mag_i,
+                    'mag_ned': mag_ned,
+                    'sun_i': sun_pos,
+                    'sun_sc_i': sun_sc_i,
+                    'moon_sc_i': moon_sc_i,
+                    'sideral': sideral}
+        aux_sensors.calibrate_mag(mag_i=channels_aux['mag_i'])
+
+        if i == 0:
+            m = aux_sensors.plot_magnetic_field_groundtrack(
+                np.linalg.norm(aux_sensors.data[['mag_x', 'mag_y', 'mag_z']], axis=1), show=False)
+        elif i == len(folders):
+            aux_sensors.plot_magnetic_field_groundtrack(np.linalg.norm(
+                aux_sensors.data[['mag_x', 'mag_y', 'mag_z']], axis=1), show=True, only_add_plots=True, basemap=m)
+        else:
+            aux_sensors.plot_magnetic_field_groundtrack(np.linalg.norm(
+                aux_sensors.data[['mag_x', 'mag_y', 'mag_z']], axis=1), show=False, only_add_plots=True, basemap=m)
     # testing groundtrack mag ************************************
 
     if EKF_SETUP == 'FULL':
