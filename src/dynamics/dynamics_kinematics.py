@@ -105,7 +105,6 @@ class Dynamics(object):
         self.channels['mag_ecef'] = np.array(mag_local_yz)
         self.channels['mag_i'] = np.array([rotationZ(mag_, -sideral_) for mag_, sideral_ in zip(mag_local_yz, sideral)])
 
-
     def plot_gt(self):
         lon = self.channels['lonlat'][:, 0]
         lat = self.channels['lonlat'][:, 1]
@@ -125,7 +124,7 @@ class Dynamics(object):
         plt.title('Groundtrack', pad=20, fontsize=12, color='black')
         ax.scatter(lon, lat, color='blue', s=10, transform=ccrs.Geodetic())
         plt.tight_layout()
-        plt.show()
+        plt.show(block=False)
 
     def plot_mag(self):
         mag_x = self.channels['mag_i'][:, 0]
@@ -166,7 +165,7 @@ class Dynamics(object):
         time_ = self.channels['full_time']
         mag_norm = np.linalg.norm(self.channels['mag_ned'], axis=1)
         plt.figure()
-        plt.title('Magnetic Field - NEV [mG]', pad=20, fontsize=12, color='black')
+        plt.title('Magnetic Field - NED [mG]', pad=20, fontsize=12, color='black')
         plt.plot(time_, mag_x, label='x')
         plt.plot(time_, mag_y, label='y')
         plt.plot(time_, mag_z, label='z')

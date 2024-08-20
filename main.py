@@ -28,8 +28,9 @@ from tools.mathtools import julian_to_datetime
 import importlib.util
 
 # CONFIG
-# PROJECT_FOLDER = "./data/20240804/"
-PROJECT_FOLDER = "./data/20230904/"
+PROJECT_FOLDER = "./data/20240804/"
+PROJECT_FOLDER = "./data/M-20230824/"
+# PROJECT_FOLDER = "./data/20230904/"
 module_name = "dataconfig"
 
 # Cargamos el módulo desde la ruta
@@ -80,6 +81,7 @@ if __name__ == '__main__':
             channels = pickle.load(fp)
         dynamic_orbital.load_data(channels)
         dynamic_orbital.calc_mag()
+        channels = dynamic_orbital.channels
     else:
         # Inertial Parameters
         channels = dynamic_orbital.get_dynamics()
@@ -87,8 +89,8 @@ if __name__ == '__main__':
         with open(PROJECT_FOLDER + 'channels.p', 'wb') as file_:
             pickle.dump(channels, file_)
 
-    dynamic_orbital.plot_gt()
-    dynamic_orbital.plot_mag()
+    # dynamic_orbital.plot_gt()
+    # dynamic_orbital.plot_mag()
 
     # VIDEO
     if CREATE_FRAME and VIDEO_DATA is not None:
@@ -102,7 +104,7 @@ if __name__ == '__main__':
         fourcc = cv2.VideoWriter_fourcc(*'XVID')
         video_salida = cv2.VideoWriter(PROJECT_FOLDER + "att_.avi", fourcc, 10.0, (100, 100))
         for filename in datalist['filename'].values:
-            height =0
+            height = 0
             edge_, img_cv2_, p_, r_ = get_vector(PROJECT_FOLDER + VIDEO_DATA.split('.')[0] + "/" + filename, height)
             if img_cv2_ is not None:
                 video_salida.write(img_cv2_)
@@ -125,7 +127,6 @@ if __name__ == '__main__':
         plt.legend()
         
         sensors.plot_key(['mag_x', 'mag_y', 'mag_z'], color=['blue', 'orange', 'green'], label=['x [mG]', 'y [mG]', 'z [mG]'])
-        # sensors.calibrate_mag(mag_i=channels['mag_i'], force=True)
         sensors.plot_key(['mag_x'], color=['blue'], label=['x [mG]'])
         sensors.plot_key(['mag_y'], color=['orange'], label=['y [mG]'])
         sensors.plot_key(['mag_z'], color=['green'], label=['z [mG]'])
@@ -143,6 +144,7 @@ if __name__ == '__main__':
         plt.show()
     else:
         plt.figure()
+        plt.title("Magnetic Field - ECI")
         plt.plot(channels['full_time'], channels['mag_i'][:, 0], 'o-', color='blue', label='mag_x [mG]')
         plt.plot(channels['full_time'], channels['mag_i'][:, 1], 'o-', color='orange', label='mag_y [mG]')
         plt.plot(channels['full_time'], channels['mag_i'][:, 2], 'o-', color='green', label='mag_z [mG]')
@@ -173,28 +175,21 @@ if __name__ == '__main__':
         # plt.grid()
 
         if ONLINE_MAG_CALIBRATION:
-            ukf = MagUKF(alpha=1)
             D_est = np.zeros(6) + 1e-7
             b_est = np.zeros(3) + 100
-            P_est = np.diag([*b_est, *D_est])  # (uT)^2
-            ukf.pCov_x = P_est
-            ukf.pCov_zero = P_est / 2
+            ukf = MagUKF(b_est, D_est, alpha=0.1)
             new_sensor_ukf = []
             stop_k = 0
             flag_t = True
             for mag_i_, mag_b_ in zip(channels['mag_i'], sensors.data[['mag_x', 'mag_y', 'mag_z']].values):
                 ukf.save()
-                ukf.run(mag_b_, mag_i_, 10, 10000, 100)
+                ukf.run(mag_b_, mag_i_, 10)#, 10000, 100)
                 bias_, D_scale = ukf.get_calibration()
                 new_sensor_ukf.append((np.eye(3) + D_scale) @ mag_b_ - bias_)
                 stop_k += 1
             # ukf.plot(np.linalg.norm(np.asarray(new_sensor_ukf), axis=1), np.linalg.norm(mag_i, axis=1))
 
-            # plot
             sensors.plot_key(['mag_x', 'mag_y', 'mag_z'])
-            # sensors.plot_key(['acc_x', 'acc_y', 'acc_z'])
-            # sensors.plot_key(['sun3', 'sun2', 'sun4'])
-
             D_ukf_vector = ukf.historical['scale'][-1]
             b_ukf = ukf.historical['bias'][-1]
             print(b_ukf, D_ukf_vector)
@@ -229,8 +224,8 @@ if __name__ == '__main__':
             # MEKF
             P = np.diag([0.5, 0.5, 0.5, 0.01, 0.01, 0.01]) # * 10
             ekf_model = MEKF(inertia, P=P, Q=np.zeros((6, 6)), R=np.zeros((3, 3)))
-            ekf_model.sigma_bias = 1e-6
-            ekf_model.sigma_omega = 1e-7
+            ekf_model.sigma_bias = 1e-5
+            ekf_model.sigma_omega = 1e-6
             ekf_model.current_bias = np.array([0.0, 0.0, 0])
         elif EKF_SETUP == 'FULL':
             # MEKF
@@ -291,7 +286,7 @@ if __name__ == '__main__':
             # css
             css_est = np.zeros(3)
             is_dark = shadow_zone(channels['sat_pos_i'][k], channels['sun_i'][k])
-            if not is_dark:
+            if not is_dark and False:
                 css_3_[css_3_ < 50] = 0.0
                 css_est = ekf_model.inject_vector(css_3_, sun_sc_i_, gain=-Imax * np.eye(3), sigma2=10, sensor='css')
             ekf_model.save_vector(name='css_est', vector=css_est)
