@@ -20,7 +20,7 @@ from cartopy.mpl.ticker import LongitudeFormatter, LatitudeFormatter
 from src.dynamics.MagEnv import MagEnv, rotationY, rotationZ
 
 solar_system_ephemeris.set('de430')
-
+_MJD_1858 = 2400000.5
 RAD2DEG = 180 / np.pi
 DEG2RAD = 1 / RAD2DEG
 au = 149597870.691  # km
@@ -130,7 +130,7 @@ class Dynamics(object):
         mag_x = self.channels['mag_i'][:, 0]
         mag_y = self.channels['mag_i'][:, 1]
         mag_z = self.channels['mag_i'][:, 2]
-        time_ = self.channels['full_time']
+        time_ = self.channels['full_time'] - _MJD_1858
         mag_norm = np.linalg.norm(self.channels['mag_i'], axis=1)
 
         plt.figure()
@@ -139,14 +139,16 @@ class Dynamics(object):
         plt.plot(time_, mag_y, label='y')
         plt.plot(time_, mag_z, label='z')
         plt.plot(time_, mag_norm, color='black', label='mag norm')
+        plt.xlabel('Modified Julian')
         plt.legend()
+        plt.xticks(rotation=15)
+        plt.ticklabel_format(useOffset=False)
         plt.tight_layout()
         plt.grid()
 
         mag_x = self.channels['mag_ecef'][:, 0]
         mag_y = self.channels['mag_ecef'][:, 1]
         mag_z = self.channels['mag_ecef'][:, 2]
-        time_ = self.channels['full_time']
         mag_norm = np.linalg.norm(self.channels['mag_ecef'], axis=1)
 
         plt.figure()
@@ -156,13 +158,15 @@ class Dynamics(object):
         plt.plot(time_, mag_z, label='z')
         plt.plot(time_, mag_norm, color='black', label='mag norm')
         plt.legend()
+        plt.xlabel('Modified Julian')
+        plt.xticks(rotation=15)
+        plt.ticklabel_format(useOffset=False)
         plt.tight_layout()
         plt.grid()
 
         mag_x = self.channels['mag_ned'][:, 0]
         mag_y = self.channels['mag_ned'][:, 1]
         mag_z = self.channels['mag_ned'][:, 2]
-        time_ = self.channels['full_time']
         mag_norm = np.linalg.norm(self.channels['mag_ned'], axis=1)
         plt.figure()
         plt.title('Magnetic Field - NED [mG]', pad=20, fontsize=12, color='black')
@@ -171,8 +175,11 @@ class Dynamics(object):
         plt.plot(time_, mag_z, label='z')
         plt.plot(time_, mag_norm, color='black', label='mag norm')
         plt.legend()
-        plt.tight_layout()
+        plt.xlabel('Modified Julian')
         plt.grid()
+        plt.xticks(rotation=15)
+        plt.ticklabel_format(useOffset=False)
+        plt.tight_layout()
         plt.show()
 
 

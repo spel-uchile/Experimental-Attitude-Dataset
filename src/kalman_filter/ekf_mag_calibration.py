@@ -99,6 +99,17 @@ class MagUKF():
         self.historical['P'].append(np.diag(self.pCov_x.copy()))
         self.historical['eigP'].append(np.sqrt(np.linalg.eigvals(self.pCov_x)))
 
+    def calibrate(self, mag_i, mag_sensors):
+        _new_sensor_ukf = []
+        stop_k = 0
+        for mag_i_, mag_b_ in zip(mag_i, mag_sensors):
+            self.save()
+            self.run(mag_b_, mag_i_, 10)  # , 10000, 100)
+            _bias_, _D_scale = self.get_calibration()
+            _new_sensor_ukf.append((np.eye(3) + _D_scale) @ mag_b_ - _bias_)
+            stop_k += 1
+        return np.asarray(_new_sensor_ukf)
+
     def run(self, sensor_, reference_, cov_sensor_, error_up=None, error_down=None):
         if error_up is not None and error_down is not None:
             if len(self.historical['error']) > 0:
@@ -222,35 +233,47 @@ class MagUKF():
         d_ = get_full_D(self.x_est[3:9])
         return bias_, d_
 
-    def plot(self, new_sensor_error, y_true):
+    def plot(self, new_sensor_error, y_true, time_):
         val = np.linalg.eigvals(self.pCov_x)
-        fig, axes = plt.subplots(3, 1)
-        fig.suptitle('UKF')
+        fig, axes = plt.subplots(3, 1, sharex=True)
+        fig.suptitle('UKF - Results')
         axes[0].grid()
-        axes[0].set_title('Bias')
-        axes[0].plot(self.historical['bias'])
+        axes[0].set_ylabel('Bias')
+        axes[0].plot(time_, self.historical['bias'])
         axes[1].grid()
-        axes[1].set_title('D scale')
-        axes[1].plot(self.historical['scale'])
-        axes[2].set_title('Error - UKF')
-        axes[2].plot(self.historical['error'])
+        axes[1].set_ylabel('D scale')
+        axes[1].plot(time_, self.historical['scale'])
+        axes[2].set_ylabel('Error - UKF')
+        axes[2].plot(time_, self.historical['error'])
         axes[2].grid()
+        axes[2].set_xlabel("Modified Julian Date")
+        axes[2].set_xticks(rotation=15)
+        axes[2].set_ticklabel_format(useOffset=False)
+        axes[2].set_tight_layout()
 
         plt.figure()
         plt.title("Covariance P - UKF")
-        plt.plot(self.historical['P'])
-        plt.xlabel("Step")
-        # plt.yscale('log')
+        plt.plot(time_, self.historical['P'])
         plt.grid()
-        # bias and D legend
         plt.legend(["bx", "by", "bz", "Dxx", "Dyy", "Dzz", "Dxy", "Dxz", "Dyz"])
+        plt.xlabel("Modified Julian Date")
+        plt.xticks(rotation=15)
+        plt.ticklabel_format(useOffset=False)
+        plt.yscale('log')
+        plt.tight_layout()
+        # bias and D legend
 
         mse_ukf = mean_squared_error(y_true, new_sensor_error)
         plt.figure()
-        plt.title("Magnitude Sensor error - UKF")
         plt.grid()
-        plt.xlabel("Step")
-        plt.plot(y_true - new_sensor_error, label='RMSE: {:2f}'.format(np.sqrt(mse_ukf)))
+        plt.title("UKF Magnitude Calibration")
+        plt.ylabel('Error [mG]')
+        plt.plot(time_, y_true - new_sensor_error, label='RMSE: {:2f} [mG]'.format(np.sqrt(mse_ukf)),
+                 drawstyle='steps-post', marker='.')
+        plt.xlabel("Modified Julian Date")
+        plt.xticks(rotation=15)
+        plt.ticklabel_format(useOffset=False)
+        plt.tight_layout()
         plt.legend()
 
 

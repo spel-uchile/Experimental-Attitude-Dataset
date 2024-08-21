@@ -10,11 +10,11 @@ import datetime
 import sys
 import os
 import pandas as pd
-from sklearn.metrics import mean_squared_error
+
 import cv2
 from src.kalman_filter.ekf_multy import MEKF
-from src.kalman_filter.ekf_mag_calibration import MagEKF
-from src.kalman_filter.ukf_propagation import UKF
+# from src.kalman_filter.ekf_mag_calibration import MagEKF
+# from src.kalman_filter.ukf_propagation import UKF
 from src.kalman_filter.ekf_full import MEKF_FULL
 from src.kalman_filter.ekf_mag_calibration import MagUKF
 from src.data_process import RealData
@@ -26,9 +26,13 @@ from tools.get_point_vector_from_picture import get_vector
 from tools.monitor import Monitor
 from tools.mathtools import julian_to_datetime
 import importlib.util
+import matplotlib as mpl
+
+mpl.rcParams['font.size'] = 10
+# mpl.rcParams['font.family'] = 'Arial'   # Set the default font family
 
 # CONFIG
-PROJECT_FOLDER = "./data/20240804/"
+# PROJECT_FOLDER = "./data/20240804/"
 PROJECT_FOLDER = "./data/M-20230824/"
 # PROJECT_FOLDER = "./data/20230904/"
 module_name = "dataconfig"
@@ -52,6 +56,13 @@ EKF_SETUP = myconfig.EKF_SETUP
 IMAGEN_DATA = myconfig.IMAGEN_DATA
 
 if __name__ == '__main__':
+    # LOAD LAST RESULT ------------------------------------------------------------------------------------------------
+    ekf_channels = None
+    if os.path.exists(PROJECT_FOLDER + "estimation_results.p") and not FORCE_CALCULATION:
+        with open(PROJECT_FOLDER + "estimation_results.p", 'rb') as fp:
+            ekf_channels = pickle.load(fp)
+
+    # REAL DATA and TIME ----------------------------------------------------------------------------------------------
     # create data with datetime, and near tle
     sensors = RealData(PROJECT_FOLDER, OBC_DATA)
     sensors.set_gyro_bias(-3.846, 0.1717, -0.6937, unit='deg')
@@ -72,8 +83,10 @@ if __name__ == '__main__':
     stop_datetime = datetime.datetime.strptime(WINDOW_TIME['Stop'], TIME_FORMAT)
     print(start_datetime.timestamp(), stop_datetime.timestamp())
 
-    # SIMULATION
+    # SIMULATION ------------------------------------------------------------------------------------------------------
     # if not exist file channels
+    Imax = 930
+    pred_step_sec = 60
     time_vector = sensors.data['jd'].values
     dynamic_orbital = Dynamics(time_vector, line1, line2)
     if os.path.exists(PROJECT_FOLDER + "channels.p") and not FORCE_CALCULATION:
@@ -91,8 +104,11 @@ if __name__ == '__main__':
 
     # dynamic_orbital.plot_gt()
     # dynamic_orbital.plot_mag()
+    # calibration using two-step and channels
+    sensors.calibrate_mag(mag_i=channels['mag_i'])
+    sensors.plot_main_data(channels)
 
-    # VIDEO
+    # VIDEO -----------------------------------------------------------------------------------------------------------
     if CREATE_FRAME and VIDEO_DATA is not None:
         save_frame(PROJECT_FOLDER, VIDEO_DATA)
 
@@ -111,115 +127,22 @@ if __name__ == '__main__':
                 print("added")
         video_salida.release()
 
-    Imax = 930
-    pred_step_sec = 60
-
-    if os.path.exists(PROJECT_FOLDER + "kf_results.p") and not FORCE_CALCULATION:
-        with open(PROJECT_FOLDER + "kf_results.p", 'rb') as fp:
-            ekf_channels = pickle.load(fp)
-        sensors.calibrate_mag(mag_i=channels['mag_i'])
-
-        plt.figure()
-        plt.plot(channels['full_time'], channels['mag_i'][:, 0], 'o-', color='blue', label='mag_x [mG]')
-        plt.plot(channels['full_time'], channels['mag_i'][:, 1], 'o-', color='orange', label='mag_y [mG]')
-        plt.plot(channels['full_time'], channels['mag_i'][:, 2], 'o-', color='green', label='mag_z [mG]')
-        plt.grid()
-        plt.legend()
-        
-        sensors.plot_key(['mag_x', 'mag_y', 'mag_z'], color=['blue', 'orange', 'green'], label=['x [mG]', 'y [mG]', 'z [mG]'])
-        sensors.plot_key(['mag_x'], color=['blue'], label=['x [mG]'])
-        sensors.plot_key(['mag_y'], color=['orange'], label=['y [mG]'])
-        sensors.plot_key(['mag_z'], color=['green'], label=['z [mG]'])
-        sensors.plot_key(['sun3'], color=['blue'], label=['-x [mA]'])
-        sensors.plot_key(['sun2'], color=['orange'], label=['-y [mA]'])
-        sensors.plot_key(['sun4'], color=['green'], label=['-z [mA]'])
-
-        error_mag_ts = np.linalg.norm(channels['mag_i'], axis=1) - np.linalg.norm(sensors.data[['mag_x', 'mag_y', 'mag_z']], axis=1)
-        mse_ts = mean_squared_error(np.linalg.norm(channels['mag_i'], axis=1), np.linalg.norm(sensors.data[['mag_x', 'mag_y', 'mag_z']], axis=1))
-        plt.figure()
-        plt.title("Two Step Magnitude Error")
-        plt.plot(error_mag_ts, label='RMSE: {:2f}'.format(np.sqrt(mse_ts)))
-        plt.legend()
-        plt.grid()
+    # UKF MAG CALIBRATION ----------------------------------------------------------------------------------------------
+    if ONLINE_MAG_CALIBRATION:
+        D_est = np.zeros(6) + 1e-7
+        b_est = np.zeros(3) + 100
+        ukf = MagUKF(b_est, D_est, alpha=0.1)
+        mag_ukf = ukf.calibrate(channels['mag_i'], sensors.data[['mag_x', 'mag_y', 'mag_z']].values)
+        ukf.plot(np.linalg.norm(mag_ukf, axis=1), np.linalg.norm(channels['mag_i'], axis=1), sensors.data['mjd'])
+        sensors.data[['mag_x', 'mag_y', 'mag_z']] = mag_ukf
         plt.show()
-    else:
-        plt.figure()
-        plt.title("Magnetic Field - ECI")
-        plt.plot(channels['full_time'], channels['mag_i'][:, 0], 'o-', color='blue', label='mag_x [mG]')
-        plt.plot(channels['full_time'], channels['mag_i'][:, 1], 'o-', color='orange', label='mag_y [mG]')
-        plt.plot(channels['full_time'], channels['mag_i'][:, 2], 'o-', color='green', label='mag_z [mG]')
-        plt.grid()
-        plt.legend()
-        sensors.plot_key(['mag_x', 'mag_y', 'mag_z'], color=['blue', 'orange', 'green'],
-                         label=['x [mG]', 'y [mG]', 'z [mG]'])
 
-        # calibration
-        ekf_mag_cal = None
-        new_sensor = []
-        sensors.plot_key(['mag_x', 'mag_y', 'mag_z'], color=['blue', 'orange', 'green'], label=['x [mG]',
-                                                                                                'y [mG]', 'z [mG]'])
-        sensors.calibrate_mag(mag_i=channels['mag_i'])
-        sensors.plot_key(['mag_x'], color=['blue'], label=['x [mG]'])
-        sensors.plot_key(['mag_y'], color=['orange'], label=['y [mG]'])
-        sensors.plot_key(['mag_z'], color=['green'], label=['z [mG]'])
-        sensors.plot_key(['sun3'], color=['blue'], label=['-x [mA]'])
-        sensors.plot_key(['sun2'], color=['orange'], label=['-y [mA]'])
-        sensors.plot_key(['sun4'], color=['green'], label=['-z [mA]'])
+    omega_b = sensors.data[['acc_x', 'acc_y', 'acc_z']].values[0]
+    q_i2b = Quaternions.get_from_two_v(channels['mag_i'][0], sensors.data[['mag_x', 'mag_y', 'mag_z']].values[0])()
+    mag_b = Quaternions(q_i2b).frame_conv(channels['mag_i'][0])
+    moon_b = Quaternions(q_i2b).frame_conv(channels['moon_sc_i'][0])
 
-        # error_mag_ts = np.linalg.norm(channels['mag_i'], axis=1) - np.linalg.norm(sensors.data[['mag_x', 'mag_y', 'mag_z']], axis=1)
-        # mse_ts = mean_squared_error(np.linalg.norm(channels['mag_i'], axis=1), np.linalg.norm(sensors.data[['mag_x', 'mag_y', 'mag_z']], axis=1))
-        # plt.figure()
-        # plt.title("Two Step Magnitude Error")
-        # plt.plot(error_mag_ts, label='RMSE: {:2f}'.format(np.sqrt(mse_ts)))
-        # plt.legend()
-        # plt.grid()
-
-        if ONLINE_MAG_CALIBRATION:
-            D_est = np.zeros(6) + 1e-7
-            b_est = np.zeros(3) + 100
-            ukf = MagUKF(b_est, D_est, alpha=0.1)
-            new_sensor_ukf = []
-            stop_k = 0
-            flag_t = True
-            for mag_i_, mag_b_ in zip(channels['mag_i'], sensors.data[['mag_x', 'mag_y', 'mag_z']].values):
-                ukf.save()
-                ukf.run(mag_b_, mag_i_, 10)#, 10000, 100)
-                bias_, D_scale = ukf.get_calibration()
-                new_sensor_ukf.append((np.eye(3) + D_scale) @ mag_b_ - bias_)
-                stop_k += 1
-            # ukf.plot(np.linalg.norm(np.asarray(new_sensor_ukf), axis=1), np.linalg.norm(mag_i, axis=1))
-
-            sensors.plot_key(['mag_x', 'mag_y', 'mag_z'])
-            D_ukf_vector = ukf.historical['scale'][-1]
-            b_ukf = ukf.historical['bias'][-1]
-            print(b_ukf, D_ukf_vector)
-            D_ukf = np.array([[D_ukf_vector[0], D_ukf_vector[3], D_ukf_vector[4]],
-                              [D_ukf_vector[3], D_ukf_vector[1], D_ukf_vector[5]],
-                              [D_ukf_vector[4], D_ukf_vector[5], D_ukf_vector[2]]])
-
-            # mag_ukf = (np.eye(3) + D_ukf).dot(sensors.data[['mag_x', 'mag_y', 'mag_z']].values.T).T - b_ukf.reshape(-1, 1).T
-            mag_ukf = np.asarray(new_sensor_ukf)
-            sensors.data[['mag_x', 'mag_y', 'mag_z']] = mag_ukf
-            ukf.plot(np.linalg.norm(mag_ukf, axis=1), np.linalg.norm(channels['mag_i'], axis=1))
-            # plt.figure()
-            # plt.plot(mag_ukf[:, 0], label='new_mag_x')
-            # plt.plot(mag_ukf[:, 1], label='new_mag_y')
-            # plt.plot(mag_ukf[:, 2], label='new_mag_z')
-            # plt.legend()
-            # plt.grid()
-            #
-            # plt.figure()
-            # plt.plot(channels['full_time'], channels['mag_i'][:, 0], label='mag_x')
-            # plt.plot(channels['full_time'], channels['mag_i'][:, 1], label='mag_y')
-            # plt.plot(channels['full_time'], channels['mag_i'][:, 2], label='mag_z')
-            # plt.legend()
-            plt.show()
-        # exit()
-        omega_b = sensors.data[['acc_x', 'acc_y', 'acc_z']].values[0]
-        q_i2b = Quaternions.get_from_two_v(channels['mag_i'][0], sensors.data[['mag_x', 'mag_y', 'mag_z']].values[0])()
-        mag_b = Quaternions(q_i2b).frame_conv(channels['mag_i'][0])
-        moon_b = Quaternions(q_i2b).frame_conv(channels['moon_sc_i'][0])
-
+    if os.path.exists(PROJECT_FOLDER + "estimation_results.p"):
         if EKF_SETUP == 'NORMAL':
             # MEKF
             P = np.diag([0.5, 0.5, 0.5, 0.01, 0.01, 0.01]) # * 10

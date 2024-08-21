@@ -12,12 +12,15 @@ from tools.two_step_mag_calibration import two_step
 import pandas as pd
 import numpy as np
 import datetime
+import functools
 import json
 import os
+from sklearn.metrics import mean_squared_error
 from sklearn.cluster import KMeans
 
 ts2022 = 1640995200 / 86400  # day
 jd2022 = 2459580.50000
+_MJD_1858 = 2400000.5
 
 
 class RealData:
@@ -30,6 +33,7 @@ class RealData:
         self.data.dropna(inplace=True)
         self.data.reset_index(inplace=True)
         self.data['jd'] = [timestamp_to_julian(float(ts)) for ts in self.data['timestamp'].values]
+        self.data['mjd'] = self.data['jd'] - _MJD_1858
         self.data[['acc_x', 'acc_y', 'acc_z']] *= np.deg2rad(1)
         self.start_time = 0.
         self.end_time = 0.
@@ -46,6 +50,30 @@ class RealData:
 
         self.data[['acc_x', 'acc_y', 'acc_z']] += np.array([gx, gy, gz])
 
+    def plot_main_data(self, channels):
+        self.plot_key(['mag_x', 'mag_y', 'mag_z'], color=['blue', 'orange', 'green'],
+                      label=['x [mG]', 'y [mG]', 'z [mG]'], drawstyle=['steps-post'] * 3, marker=['.'] * 3)
+        self.plot_key(['sun3'], color=['blue'], label=['-x [mA]'], drawstyle=['steps-post'], marker=['.'] * 3)
+        self.plot_key(['sun2'], color=['orange'], label=['-y [mA]'], drawstyle=['steps-post'], marker=['.'])
+        self.plot_key(['sun4'], color=['green'], label=['-z [mA]'], drawstyle=['steps-post'], marker=['.'])
+
+        error_mag_ts = np.linalg.norm(channels['mag_i'], axis=1) - np.linalg.norm(
+            self.data[['mag_x', 'mag_y', 'mag_z']],
+            axis=1)
+        mse_ts = mean_squared_error(np.linalg.norm(channels['mag_i'], axis=1),
+                                    np.linalg.norm(self.data[['mag_x', 'mag_y', 'mag_z']], axis=1))
+        plt.figure()
+        plt.title("Two Step Magnitude")
+        plt.ylabel('Error [mG]')
+        plt.plot(self.data['mjd'], error_mag_ts, label='RMSE: {:2f} [mG]'.format(np.sqrt(mse_ts)),
+                 drawstyle='steps-post', marker='.')
+        plt.legend()
+        plt.xlabel("Modified Julian Date")
+        plt.xticks(rotation=15)
+        plt.ticklabel_format(useOffset=False)
+        plt.tight_layout()
+        plt.grid()
+
     def plot_key(self, to_plot: list, show: bool = False, **kwargs):
         for key, value in kwargs.items():
             print("%s == %s" % (key, value))
@@ -55,9 +83,12 @@ class RealData:
             dict_temp = {}
             for key, value in kwargs.items():
                 dict_temp[key] = value[i]
-            plt.plot(self.data['jd'], self.data[elem], **dict_temp)
-        plt.xlabel('Julian Date')
+            plt.plot(self.data['mjd'], self.data[elem], **dict_temp)
+        plt.xlabel('Modified Julian Date')
         plt.legend()
+        plt.xticks(rotation=15)
+        plt.ticklabel_format(useOffset=False)
+        plt.tight_layout()
         plt.show() if show else None
 
     def search_nearly_tle(self):
@@ -176,6 +207,18 @@ class RealData:
             temp = self.data['DateTime'].values[np.argwhere(model.labels_ == i)]
             print(f"Cluster {i}: Start: {temp[0]} - Stop: {temp[-1]}")
         return model
+
+
+def module_exception_log(method, *args, **kwargs):
+    """ Catch and log exceptions to do not crash the GUI"""
+    @functools.wraps(method, *args, **kwargs)
+    def wrapper(self, *args, **kwargs):
+        try:
+            method(self, *args, **kwargs)
+        except Exception as e:
+            print("Error: {}".format(str(e)))
+    return wrapper
+
 
 def get_full_D(d_vector):
     d_ = np.zeros((3, 3))
