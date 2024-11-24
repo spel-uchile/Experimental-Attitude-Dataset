@@ -104,20 +104,20 @@ class MagUKF():
         stop_k = 0
         for mag_i_, mag_b_ in zip(mag_i, mag_sensors):
             self.save()
-            self.run(mag_b_, mag_i_, 10)  # , 10000, 100)
+            self.run(mag_b_, mag_i_, 2.8 ** 2)# , 5000, 100)
             _bias_, _D_scale = self.get_calibration()
             _new_sensor_ukf.append((np.eye(3) + _D_scale) @ mag_b_ - _bias_)
             stop_k += 1
         return np.asarray(_new_sensor_ukf)
 
     def run(self, sensor_, reference_, cov_sensor_, error_up=None, error_down=None):
-        if error_up is not None and error_down is not None:
-            if len(self.historical['error']) > 0:
-                if abs(self.historical['error'][-1]) > error_up and not self.flag:
-                    self.pCov_x = self.pCov_zero
-                    self.flag = True
-                else:#if abs(self.historical['error'][-1]) <= error_down and self.flag:
-                    self.flag = False
+        # if error_up is not None and error_down is not None:
+        #     if len(self.historical['error']) > 0:
+        #         if abs(self.historical['error'][-1]) > error_up and not self.flag:
+        #             self.pCov_x = self.pCov_zero
+        #             self.flag = True
+        #         else:#if abs(self.historical['error'][-1]) <= error_down and self.flag:
+        #             self.flag = False
 
         current_x = self.x_est.copy() # + np.random.normal(0, scale=[1, 1, 1, 1e-6, 1e-6, 1e-6, 1e-8, 1e-8, 1e-8]) * 1e-1
 
@@ -151,15 +151,15 @@ class MagUKF():
         self.x_est = x_k + kk_ @ np.atleast_1d(error_)
         # self.x_est[3:] = np.maximum(self.x_est[3:], 0)
         self.pCov_x = p_cov_x - kk_ @ p_zz @ kk_.T
-        # if len(self.historical['error']) > 0 and error_up is not None and error_down is not None:
-        #     if abs(error_) > error_up and not self.flag:
-        #         # self.pCov_x[:3, :3] = self.pCov_zero[:3, :3]
-        #         self.pCov_x = self.pCov_zero
-        #         self.flag = True
-        #         print("After:", error_)
-        #     elif abs(error_) <= error_down and self.flag:
-        #         self.flag = False
-        #         print("low:", error_)
+        if len(self.historical['error']) > 0 and error_up is not None and error_down is not None:
+            if abs(error_) > error_up and not self.flag:
+                # self.pCov_x[:3, :3] = self.pCov_zero[:3, :3]
+                self.pCov_x = self.pCov_zero
+                self.flag = True
+                print("After:", error_)
+            elif abs(error_) <= error_down and self.flag:
+                self.flag = False
+                print("low:", error_)
         # if len(self.historical['error']) > 1:
         #     self.alpha *= np.abs(error_ / self.historical['error'][-1]) ** 2
         #     self.alpha = min(max(self.alpha, 1), 40)
@@ -233,7 +233,7 @@ class MagUKF():
         d_ = get_full_D(self.x_est[3:9])
         return bias_, d_
 
-    def plot(self, new_sensor_error, y_true, time_):
+    def plot(self, new_sensor_error, y_true, time_, folder_save):
         val = np.linalg.eigvals(self.pCov_x)
         fig, axes = plt.subplots(3, 1, sharex=True)
         fig.suptitle('UKF - Results')
@@ -247,11 +247,25 @@ class MagUKF():
         axes[2].plot(time_, self.historical['error'])
         axes[2].grid()
         axes[2].set_xlabel("Modified Julian Date")
-        axes[2].set_xticks(rotation=15)
-        axes[2].set_ticklabel_format(useOffset=False)
-        axes[2].set_tight_layout()
+        # axes[2].set_xticks(rotation=15)
+        # axes[2].set_ticklabel_format(useOffset=False)
+        # axes[2].set_tight_layout()
+        fig.savefig(folder_save + 'ukf_result.jpg')
+        plt.close(fig)
 
-        plt.figure()
+        fig = plt.figure()
+        plt.title("UKF Error")
+        plt.plot(time_, self.historical['error'])
+        plt.grid()
+        plt.xlabel("Modified Julian Date")
+        plt.ylabel(r"$B^2 - R^2$")
+        plt.xticks(rotation=15)
+        plt.ticklabel_format(useOffset=False)
+        plt.tight_layout()
+        fig.savefig(folder_save + 'ukf_error.jpg')
+        plt.close(fig)
+
+        fig = plt.figure()
         plt.title("Covariance P - UKF")
         plt.plot(time_, self.historical['P'])
         plt.grid()
@@ -261,20 +275,24 @@ class MagUKF():
         plt.ticklabel_format(useOffset=False)
         plt.yscale('log')
         plt.tight_layout()
+        fig.savefig(folder_save + 'ukf_covariance.jpg')
+        plt.close(fig)
         # bias and D legend
 
         mse_ukf = mean_squared_error(y_true, new_sensor_error)
-        plt.figure()
+        fig = plt.figure()
         plt.grid()
         plt.title("UKF Magnitude Calibration")
         plt.ylabel('Error [mG]')
         plt.plot(time_, y_true - new_sensor_error, label='RMSE: {:2f} [mG]'.format(np.sqrt(mse_ukf)),
-                 drawstyle='steps-post', marker='.')
+                 drawstyle='steps-post', marker='.', alpha=0.3)
         plt.xlabel("Modified Julian Date")
         plt.xticks(rotation=15)
         plt.ticklabel_format(useOffset=False)
         plt.tight_layout()
         plt.legend()
+        fig.savefig(folder_save + 'ukf_mag_cal_error.jpg')
+        plt.close(fig)
 
 
 class MagEKF():

@@ -79,9 +79,6 @@ class Dynamics(object):
                          'sat_pos_i': sat_pos_gcrs,
                          'lonlat': np.array([sat_lon, sat_lat]).T,
                          'sat_vel_i': sat_vel_gcrs,
-                         'q_i2b_pred': [],
-                         'omega_b_pred': [],
-                         'time_pred': [],
                          'mag_i': mag_eci * 0.01,  # nT to mG,
                          'mag_ecef': mag_ecef * 0.01,  # nT to mG,
                          'mag_ned': mag_ned * 0.01,
@@ -105,11 +102,11 @@ class Dynamics(object):
         self.channels['mag_ecef'] = np.array(mag_local_yz)
         self.channels['mag_i'] = np.array([rotationZ(mag_, -sideral_) for mag_, sideral_ in zip(mag_local_yz, sideral)])
 
-    def plot_gt(self):
+    def plot_gt(self, folder_save):
         lon = self.channels['lonlat'][:, 0]
         lat = self.channels['lonlat'][:, 1]
 
-        plt.figure(figsize=(12, 8))
+        fig = plt.figure(figsize=(12, 8))
         ax = plt.axes(projection=ccrs.PlateCarree())
         ax.stock_img()
         gl = ax.gridlines(draw_labels=True, linewidth=0.5, color='gray', linestyle='--')
@@ -124,16 +121,37 @@ class Dynamics(object):
         plt.title('Groundtrack', pad=20, fontsize=12, color='black')
         ax.scatter(lon, lat, color='blue', s=10, transform=ccrs.Geodetic())
         plt.tight_layout()
-        plt.show(block=False)
+        fig.savefig(folder_save + '.jpg')
+        plt.close(fig)
 
-    def plot_mag(self):
+    def plot_sun_sc(self, folder_name):
+        mag_x = self.channels['sun_sc_i'][:, 0]
+        mag_y = self.channels['sun_sc_i'][:, 1]
+        mag_z = self.channels['sun_sc_i'][:, 2]
+        time_ = self.channels['full_time'] - _MJD_1858
+
+        fig = plt.figure()
+        plt.title('Sun position relative to spacecraf - GCRS [km]', pad=20, fontsize=12, color='black')
+        plt.plot(time_, mag_x, label='x')
+        plt.plot(time_, mag_y, label='y')
+        plt.plot(time_, mag_z, label='z')
+        plt.xlabel('Modified Julian')
+        plt.legend()
+        plt.xticks(rotation=15)
+        plt.ticklabel_format(useOffset=False)
+        plt.tight_layout()
+        plt.grid()
+        fig.savefig(folder_name + '_eci.jpg')
+        plt.close(fig)
+
+    def plot_mag(self, folder_name):
         mag_x = self.channels['mag_i'][:, 0]
         mag_y = self.channels['mag_i'][:, 1]
         mag_z = self.channels['mag_i'][:, 2]
         time_ = self.channels['full_time'] - _MJD_1858
         mag_norm = np.linalg.norm(self.channels['mag_i'], axis=1)
 
-        plt.figure()
+        fig = plt.figure()
         plt.title('Magnetic Field - ECI [mG]', pad=20, fontsize=12, color='black')
         plt.plot(time_, mag_x, label='x')
         plt.plot(time_, mag_y, label='y')
@@ -145,13 +163,15 @@ class Dynamics(object):
         plt.ticklabel_format(useOffset=False)
         plt.tight_layout()
         plt.grid()
+        fig.savefig(folder_name + '_eci.jpg')
+        plt.close(fig)
 
         mag_x = self.channels['mag_ecef'][:, 0]
         mag_y = self.channels['mag_ecef'][:, 1]
         mag_z = self.channels['mag_ecef'][:, 2]
         mag_norm = np.linalg.norm(self.channels['mag_ecef'], axis=1)
 
-        plt.figure()
+        fig = plt.figure()
         plt.title('Magnetic Field - ECEF [mG]', pad=20, fontsize=12, color='black')
         plt.plot(time_, mag_x, label='x')
         plt.plot(time_, mag_y, label='y')
@@ -163,12 +183,14 @@ class Dynamics(object):
         plt.ticklabel_format(useOffset=False)
         plt.tight_layout()
         plt.grid()
+        fig.savefig(folder_name + '_ecef.jpg')
+        plt.close(fig)
 
         mag_x = self.channels['mag_ned'][:, 0]
         mag_y = self.channels['mag_ned'][:, 1]
         mag_z = self.channels['mag_ned'][:, 2]
         mag_norm = np.linalg.norm(self.channels['mag_ned'], axis=1)
-        plt.figure()
+        fig = plt.figure()
         plt.title('Magnetic Field - NED [mG]', pad=20, fontsize=12, color='black')
         plt.plot(time_, mag_x, label='x')
         plt.plot(time_, mag_y, label='y')
@@ -180,7 +202,8 @@ class Dynamics(object):
         plt.xticks(rotation=15)
         plt.ticklabel_format(useOffset=False)
         plt.tight_layout()
-        plt.show()
+        fig.savefig(folder_name + '_ned.jpg')
+        plt.close(fig)
 
 
 def calc_moon_pos_i(t: Time):
@@ -190,18 +213,6 @@ def calc_moon_pos_i(t: Time):
 
 
 def calc_sun_pos_i(t: Time):
-    # all in degree
-    # n = jd - 2451545.0
-    # l = (280.459 + 0.98564736 * n) % 360.0
-    # m = (357.529 + 0.98560023 * n) % 360.0
-    # m *= DEG2RAD
-    # lam = (l + 1.915 * np.sin(m) + 0.0200 * np.sin(2 * m)) % 360.0
-    # lam *= DEG2RAD
-    # e = 23.439 - 3.56e-7 * n
-    # e *= DEG2RAD
-    #
-    # r_sun = (1.00014 - 0.01671 * np.cos(m) - 0.000140 * np.cos(2 * m)) * au
-    # u_v = np.array([np.cos(lam), np.cos(e) * np.sin(lam), np.sin(lam) * np.sin(e)])
     sun_body = get_body('sun', t, loc)
     sun_pos = np.asarray(sun_body.cartesian.xyz) / 1000  # km GCRS
     return sun_pos
@@ -286,4 +297,9 @@ def dquaternion(x_quaternion_i2b, x_omega_b):
 
 
 if __name__ == '__main__':
-    pass
+    # dd-mm-yyyy HH:MM:SS
+
+    start_date = "01-06-2023 00:00:00"
+    end_date = "03-06-2023 00:00:00"
+    time_vector = []
+    dynamic_orbital = Dynamics(time_vector, line1, line2)

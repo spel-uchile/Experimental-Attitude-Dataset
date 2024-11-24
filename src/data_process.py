@@ -15,6 +15,7 @@ import datetime
 import functools
 import json
 import os
+from scipy.spatial import ConvexHull
 from sklearn.metrics import mean_squared_error
 from sklearn.cluster import KMeans
 
@@ -35,8 +36,74 @@ class RealData:
         self.data['jd'] = [timestamp_to_julian(float(ts)) for ts in self.data['timestamp'].values]
         self.data['mjd'] = self.data['jd'] - _MJD_1858
         self.data[['acc_x', 'acc_y', 'acc_z']] *= np.deg2rad(1)
+        self.data['||mag||'] = np.linalg.norm(self.data[['mag_x', 'mag_y', 'mag_z']], axis=1)
         self.start_time = 0.
         self.end_time = 0.
+        self.sc_inertia = np.array([38478.678, 38528.678, 6873.717, 0, 0, 0]) * 1e-6
+        self.set_geometric_mag_bias()
+
+    def set_geometric_mag_bias(self):
+        # points_xy = self.data[['mag_x', 'mag_y']].values
+        # points_xz = self.data[['mag_x', 'mag_z']].values
+        # points_yz = self.data[['mag_y', 'mag_z']].values
+        #
+        # points_xy = points_xy[points_xy[:, 1] > 0]
+        # points_xz = points_xz[points_xz[:, 1] > 0]
+        # points_yz = points_yz[points_yz[:, 1] > 0]
+        #
+        # hull_xy = ConvexHull(points_xy)
+        # hull_xz = ConvexHull(points_xz)
+        # hull_yz = ConvexHull(points_yz)
+        #
+        # hull_points_xy = points_xy[hull_xy.vertices]
+        # hull_points_xz = points_xz[hull_xz.vertices]
+        # hull_points_yz = points_yz[hull_yz.vertices]
+        #
+        # contour_center_xy = np.mean(hull_points_xy, axis=0)
+        # contour_center_xz = np.mean(hull_points_xz, axis=0)
+        # contour_center_yz = np.mean(hull_points_yz, axis=0)
+        self.show_mag_geometry("Raw Mag Data")
+
+    def show_mag_geometry(self, title: str =None):
+        fig, axes = plt.subplots(1, 3, figsize=(12, 4.1))
+        fig.suptitle(title) if title is not None else None
+        center_mean = self.data[['mag_x', 'mag_y', 'mag_z']].mean()
+        axes[0].set_title(f"({np.round(center_mean[0], 2)}, {np.round(center_mean[2], 2)})")
+        axes[1].set_title(f"({np.round(center_mean[1], 2)}, {np.round(center_mean[2], 2)})")
+        axes[2].set_title(f"({np.round(center_mean[0], 2)}, {np.round(center_mean[1], 2)})")
+
+        axes[0].plot(self.data['mag_x'], self.data['mag_z'], '.')
+        axes[0].plot(center_mean[0], center_mean[2], 'r*')
+        # axes[0].plot(contour_center_xz[0], contour_center_xz[1], 'y*')
+        # axes[0].plot(hull_points_xz[:, 0], hull_points_xz[:, 1], 'r-', label='Contorno exterior')
+        axes[0].grid()
+        axes[0].set_ylabel('Mag z [mG]')
+        axes[0].set_xlabel('Mag x [mG]')
+        axes[0].set_box_aspect(1)
+
+        axes[1].plot(self.data['mag_y'], self.data['mag_z'], '.')
+        axes[1].plot(center_mean[1], center_mean[2], 'r*')
+        axes[1].grid()
+        # axes[1].plot(contour_center_yz[0], contour_center_yz[1], 'y*')
+        # axes[1].plot(hull_points_yz[:, 0], hull_points_yz[:, 1], 'r-', label='Contorno exterior')
+        axes[1].set_ylabel('Mag y [mG]')
+        axes[1].set_xlabel('Mag z [mG]')
+        axes[1].set_box_aspect(1)
+        axes[2].plot(self.data['mag_x'], self.data['mag_y'], '.')
+        axes[2].plot(center_mean[0], center_mean[1], 'r*')
+        axes[2].grid()
+        # axes[2].plot(contour_center_xy[0], contour_center_xy[1], 'y*')
+        # axes[2].plot(hull_points_xy[:, 0], hull_points_xy[:, 1], 'r-', label='Contorno exterior')
+        axes[2].set_ylabel('Mag x [mG]')
+        axes[2].set_xlabel('Mag y [mG]')
+        axes[2].set_box_aspect(1)
+        plt.tight_layout()
+        name_ = self.folder_path + "results/"+ f'{title.replace(" ", "_").lower()}_geo.jpg'
+        fig.savefig(name_)
+        plt.close()
+
+    def set_inertia(self, inertia_):
+        self.sc_inertia = inertia_
 
     def create_datetime_from_timestamp(self, time_format):
         self.data['DateTime'] = [datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc).strftime(time_format)
@@ -51,45 +118,59 @@ class RealData:
         self.data[['acc_x', 'acc_y', 'acc_z']] += np.array([gx, gy, gz])
 
     def plot_main_data(self, channels):
-        self.plot_key(['mag_x', 'mag_y', 'mag_z'], color=['blue', 'orange', 'green'],
-                      label=['x [mG]', 'y [mG]', 'z [mG]'], drawstyle=['steps-post'] * 3, marker=['.'] * 3)
-        self.plot_key(['sun3'], color=['blue'], label=['-x [mA]'], drawstyle=['steps-post'], marker=['.'] * 3)
-        self.plot_key(['sun2'], color=['orange'], label=['-y [mA]'], drawstyle=['steps-post'], marker=['.'])
-        self.plot_key(['sun4'], color=['green'], label=['-z [mA]'], drawstyle=['steps-post'], marker=['.'])
+        self.plot_key(['mag_x', 'mag_y', 'mag_z', '||mag||'], color=['blue', 'orange', 'green', 'black'],
+                      name="mag_sensor_mg", title="Raw Mag Sensor [mG]",
+                      label=['x [mG]', 'y [mG]', 'z [mG]', '||mag||'], drawstyle=['steps-post'] * 4, marker=['.'] * 4)
+        self.plot_key(['acc_x', 'acc_y', 'acc_z'], color=['blue', 'orange', 'green'],
+                      name="gyro_sensor_dps", title="Raw Gyro Sensor [rad/s]",
+                      label=['x [mG]', 'y [mG]', 'z [mG]', '||mag||'], drawstyle=['steps-post'] * 4, marker=['.'] * 4)
+        self.plot_key(['sun3'], color=['blue'], label=['-x [mA]'], name='css3', title="Intensity -x [mA]",
+                      drawstyle=['steps-post'], marker=['.'] * 3)
+        self.plot_key(['sun2'], color=['orange'], label=['-y [mA]'], name='css2', title="Intensity -y [mA]",
+                      drawstyle=['steps-post'], marker=['.'])
+        self.plot_key(['sun4'], color=['green'], label=['-z [mA]'], name='css4', title="Intensity -z [mA]",
+                      drawstyle=['steps-post'], marker=['.'])
 
+
+    def plot_mag_error(self, channels, sub_name):
         error_mag_ts = np.linalg.norm(channels['mag_i'], axis=1) - np.linalg.norm(
             self.data[['mag_x', 'mag_y', 'mag_z']],
             axis=1)
+
         mse_ts = mean_squared_error(np.linalg.norm(channels['mag_i'], axis=1),
                                     np.linalg.norm(self.data[['mag_x', 'mag_y', 'mag_z']], axis=1))
-        plt.figure()
-        plt.title("Two Step Magnitude")
+        fig = plt.figure()
+        plt.title(f"Magnitude Error {sub_name} TWO STEP Calibration")
         plt.ylabel('Error [mG]')
         plt.plot(self.data['mjd'], error_mag_ts, label='RMSE: {:2f} [mG]'.format(np.sqrt(mse_ts)),
-                 drawstyle='steps-post', marker='.')
+                 drawstyle='steps-post', marker='.', alpha=0.3)
         plt.legend()
         plt.xlabel("Modified Julian Date")
         plt.xticks(rotation=15)
         plt.ticklabel_format(useOffset=False)
         plt.tight_layout()
         plt.grid()
+        fig.savefig(self.folder_path + f"results/two_step_mag_{sub_name}" + '.jpg')
+        plt.close(fig)
 
-    def plot_key(self, to_plot: list, show: bool = False, **kwargs):
+    def plot_key(self, to_plot: list, name='', title: str = None, show: bool = False, **kwargs):
         for key, value in kwargs.items():
             print("%s == %s" % (key, value))
-        plt.figure()
+        fig = plt.figure()
         plt.grid()
+        plt.title(title) if title is not None else None
         for i, elem in enumerate(to_plot):
             dict_temp = {}
             for key, value in kwargs.items():
                 dict_temp[key] = value[i]
-            plt.plot(self.data['mjd'], self.data[elem], **dict_temp)
+            plt.plot(self.data['mjd'], self.data[elem], **dict_temp, alpha=0.3)
         plt.xlabel('Modified Julian Date')
         plt.legend()
         plt.xticks(rotation=15)
         plt.ticklabel_format(useOffset=False)
         plt.tight_layout()
-        plt.show() if show else None
+        fig.savefig(self.folder_path + "results/" + name + ".jpg")
+        plt.show() if show else plt.close(fig)
 
     def search_nearly_tle(self):
         jd_init = self.data['jd'].values[0]
@@ -108,6 +189,9 @@ class RealData:
 
     def scale_mag(self, scale_):
         self.data[['mag_x', 'mag_y', 'mag_z']] *= scale_
+
+    def calibrate_gyro(self):
+        pass
 
     def calibrate_mag(self, scale: np.array = None, bias: np.array = None, mag_i: np.array = None,
                       by_file=False, force=False):
@@ -146,6 +230,7 @@ class RealData:
                 scale = get_full_D(x_non_sol[3:])
                 self.data[['mag_x', 'mag_y', 'mag_z']] = np.matmul(self.data[['mag_x', 'mag_y', 'mag_z']],
                                                                    (np.eye(3) + scale)) - bias
+        self.data['||mag||'] = np.linalg.norm(self.data[['mag_x', 'mag_y', 'mag_z']], axis=1)
 
     def set_window_time(self, start_str=None, stop_str=None, format_time=None):
         if start_str is None and stop_str is None and format_time is None:

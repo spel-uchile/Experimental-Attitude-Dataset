@@ -28,13 +28,13 @@ from tools.mathtools import julian_to_datetime
 import importlib.util
 import matplotlib as mpl
 
-mpl.rcParams['font.size'] = 10
+mpl.rcParams['font.size'] = 12
 # mpl.rcParams['font.family'] = 'Arial'   # Set the default font family
 
 # CONFIG
 # PROJECT_FOLDER = "./data/20240804/"
-PROJECT_FOLDER = "./data/M-20230824/"
-# PROJECT_FOLDER = "./data/20230904/"
+# PROJECT_FOLDER = "./data/M-20230824/"
+PROJECT_FOLDER = "./data/20230904/"
 module_name = "dataconfig"
 
 # Cargamos el módulo desde la ruta
@@ -58,6 +58,8 @@ IMAGEN_DATA = myconfig.IMAGEN_DATA
 if __name__ == '__main__':
     # LOAD LAST RESULT ------------------------------------------------------------------------------------------------
     ekf_channels = None
+    if not os.path.exists(PROJECT_FOLDER + "results/"):
+        os.mkdir(PROJECT_FOLDER + "results/")
     if os.path.exists(PROJECT_FOLDER + "estimation_results.p") and not FORCE_CALCULATION:
         with open(PROJECT_FOLDER + "estimation_results.p", 'rb') as fp:
             ekf_channels = pickle.load(fp)
@@ -65,10 +67,11 @@ if __name__ == '__main__':
     # REAL DATA and TIME ----------------------------------------------------------------------------------------------
     # create data with datetime, and near tle
     sensors = RealData(PROJECT_FOLDER, OBC_DATA)
-    sensors.set_gyro_bias(-3.846, 0.1717, -0.6937, unit='deg')
+    # sensors.set_gyro_bias(-3.846, 0.1717, -0.6937, unit='deg')
     sensors.create_datetime_from_timestamp(TIME_FORMAT)
     inertia = np.array([38478.678, 38528.678, 6873.717, 0, 0, 0]) * 1e-6
     # sensors.estimate_inertia_matrix(guess=inertia)
+    sensors.set_inertia(inertia)
     # show window time
     if WINDOW_TIME['FLAG']:
         sensors.set_window_time(WINDOW_TIME['Start'], WINDOW_TIME['Stop'], TIME_FORMAT)
@@ -102,11 +105,23 @@ if __name__ == '__main__':
         with open(PROJECT_FOLDER + 'channels.p', 'wb') as file_:
             pickle.dump(channels, file_)
 
-    # dynamic_orbital.plot_gt()
-    # dynamic_orbital.plot_mag()
+    dynamic_orbital.plot_gt(PROJECT_FOLDER + 'results/gt')
+    dynamic_orbital.plot_mag(PROJECT_FOLDER + 'results/mag_model_igrf13')
+    dynamic_orbital.plot_sun_sc(PROJECT_FOLDER + 'results/sun_pos_from_sc')
     # calibration using two-step and channels
-    sensors.calibrate_mag(mag_i=channels['mag_i'])
     sensors.plot_main_data(channels)
+    sensors.plot_mag_error(channels, 'before')
+    sensors.calibrate_mag(mag_i=channels['mag_i'])
+    sensors.plot_key(['mag_x', 'mag_y', 'mag_z', '||mag||'], color=['blue', 'orange', 'green', 'black'],
+                     name="mag_sensor_mg_two_step", title="TWO STEP Calibration - Mag [mG]",
+                     label=['x [mG]', 'y [mG]', 'z [mG]', '||mag||'], drawstyle=['steps-post'] * 4, marker=['.'] * 4)
+    sensors.plot_mag_error(channels, 'after')
+    sensors.show_mag_geometry("TWO STEP Method")
+    # calibrate gyro
+    sensors.calibrate_gyro()
+    sensors.plot_key(['acc_x', 'acc_y', 'acc_z'], color=['blue', 'orange', 'green'],
+                      name="cal_gyro_sensor_dps", title="Calibrate Gyro Sensor [rad/s]",
+                      label=['x [mG]', 'y [mG]', 'z [mG]', '||mag||'], drawstyle=['steps-post'] * 4, marker=['.'] * 4)
 
     # VIDEO -----------------------------------------------------------------------------------------------------------
     if CREATE_FRAME and VIDEO_DATA is not None:
@@ -129,23 +144,32 @@ if __name__ == '__main__':
 
     # UKF MAG CALIBRATION ----------------------------------------------------------------------------------------------
     if ONLINE_MAG_CALIBRATION:
-        D_est = np.zeros(6) + 1e-7
-        b_est = np.zeros(3) + 100
+        D_est = np.zeros(6) + 1e-9
+        b_est = np.zeros(3) + 10
         ukf = MagUKF(b_est, D_est, alpha=0.1)
         mag_ukf = ukf.calibrate(channels['mag_i'], sensors.data[['mag_x', 'mag_y', 'mag_z']].values)
-        ukf.plot(np.linalg.norm(mag_ukf, axis=1), np.linalg.norm(channels['mag_i'], axis=1), sensors.data['mjd'])
+        ukf.plot(np.linalg.norm(mag_ukf, axis=1), np.linalg.norm(channels['mag_i'], axis=1), sensors.data['mjd'],
+                 PROJECT_FOLDER + 'results/')
         sensors.data[['mag_x', 'mag_y', 'mag_z']] = mag_ukf
-        plt.show()
+        sensors.data['||mag||'] = np.linalg.norm(mag_ukf, axis=1)
+        sensors.plot_key(['mag_x', 'mag_y', 'mag_z', '||mag||'], color=['blue', 'orange', 'green', 'black'],
+                         name="mag_sensor_mg_ukf", show=False, title="UKF Calibration - Mag [mG]",
+                         label=['x [mG]', 'y [mG]', 'z [mG]', '||mag||'], drawstyle=['steps-post'] * 4, marker=['.'] * 4)
 
+    sensors.show_mag_geometry("UKF Method")
     omega_b = sensors.data[['acc_x', 'acc_y', 'acc_z']].values[0]
     q_i2b = Quaternions.get_from_two_v(channels['mag_i'][0], sensors.data[['mag_x', 'mag_y', 'mag_z']].values[0])()
     mag_b = Quaternions(q_i2b).frame_conv(channels['mag_i'][0])
     moon_b = Quaternions(q_i2b).frame_conv(channels['moon_sc_i'][0])
 
-    if os.path.exists(PROJECT_FOLDER + "estimation_results.p"):
+    prediction_dict = {'q_i2b_pred': [],
+                       'omega_b_pred': [],
+                       'time_pred': [],}
+
+    if not os.path.exists(PROJECT_FOLDER + "estimation_results.p"):
         if EKF_SETUP == 'NORMAL':
             # MEKF
-            P = np.diag([0.5, 0.5, 0.5, 0.01, 0.01, 0.01]) # * 10
+            P = np.diag([0.5, 0.5, 0.5, 0.01, 0.01, 0.01])  # * 10
             ekf_model = MEKF(inertia, P=P, Q=np.zeros((6, 6)), R=np.zeros((3, 3)))
             ekf_model.sigma_bias = 1e-5
             ekf_model.sigma_omega = 1e-6
@@ -219,12 +243,12 @@ if __name__ == '__main__':
             moon_sc_b.append(Quaternions(ekf_model.current_quaternion).frame_conv(channels['moon_sc_i'][k]))
             ekf_model.set_gyro_measure(omega_gyro_)
             # save data
-            channels['time_pred'].append(t_pred)
-            channels['q_i2b_pred'].append(q_i2b_pred)
-            channels['omega_b_pred'].append(omega_b_pred)
+            prediction_dict['time_pred'].append(t_pred)
+            prediction_dict['q_i2b_pred'].append(q_i2b_pred)
+            prediction_dict['omega_b_pred'].append(omega_b_pred)
             k += 1
-        ekf_channels = ekf_model.historical
-        with open(PROJECT_FOLDER + 'kf_results.p', 'wb') as file_:
+        ekf_channels = {**prediction_dict, **ekf_model.historical}
+        with open(PROJECT_FOLDER + 'estimation_results.p', 'wb') as file_:
             pickle.dump(ekf_channels, file_)
 
     data_text = ["{}".format(julian_to_datetime(jd_)) for jd_ in channels['full_time']]
@@ -244,7 +268,7 @@ if __name__ == '__main__':
     plt.plot(error_mag)
     plt.grid()
 
-    plt.figure()
+    fig = plt.figure()
     plt.title("Error prediction [deg]")
     plt.xlabel("Step")
     plt.plot(np.array(error_pred) * 180 / np.pi)
