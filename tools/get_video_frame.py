@@ -1,10 +1,38 @@
 
+from datetime import datetime
 import cv2
 import os
 import errno
+import subprocess
+import json
 
 
-def save_frame(folder, video_file, reduction=False):
+def get_video_creation_date(video_path):
+    try:
+        # Run ffprobe command to extract metadata
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v", "quiet",
+                "-print_format", "json",
+                "-show_entries", "format_tags",
+                video_path
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        metadata = json.loads(result.stdout)
+
+        # Access the creation date in the tags
+        creation_date = metadata.get("format", {}).get("tags", {}).get("creation_time")
+        return creation_date
+    except Exception as e:
+        print(f"Error retrieving metadata: {e}")
+        return None
+
+
+def save_frame(folder, video_file, video_last_frame, reduction=False):
     # Crear un objeto de captura de video
     cap = cv2.VideoCapture(folder + video_file)
 
@@ -18,6 +46,7 @@ def save_frame(folder, video_file, reduction=False):
     frame_count = 0
 
     # Bucle para leer los frames del video
+    to_save = []
     while cap.isOpened():
         # Leer el siguiente frame
         ret, frame = cap.read()
@@ -37,13 +66,21 @@ def save_frame(folder, video_file, reduction=False):
         # cut
         width, height = frame.shape[1], frame.shape[0]
         # frame = frame[int(height / 2 - 50): int(height / 2 + 50), int(width / 2 - 50): int(width / 2 + 50), :]
+        to_save.append(frame)
 
+    # timestamp for video_last_frame ("2023/09/04 14:49:04")
+    end_timestamp = datetime.strptime(video_last_frame, '%Y/%m/%d %H:%M:%S').timestamp()
+    dt = 1 / cap.get(cv2.CAP_PROP_FPS)
+    length = len(to_save)
+    for i, frame in enumerate(reversed(to_save)):
+        print(f" -- saving frame {i}/{length} ")
         # Guardar el frame como una imagen
-        frame_file = f"frame{frame_count}.png"
+        frame_file = f"{end_timestamp - dt * i}.png"
         cv2.imwrite(folder + video_file.split('.')[0] + '/' + frame_file, frame)
 
     # Liberar los recursos
     cap.release()
+    return frame.shape
 
 
 if __name__ == '__main__':

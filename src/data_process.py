@@ -15,6 +15,7 @@ import datetime
 import functools
 import json
 import os
+from src.kalman_filter.ekf_omega import EKFOmega
 from scipy.spatial import ConvexHull
 from sklearn.metrics import mean_squared_error
 from sklearn.cluster import KMeans
@@ -103,7 +104,7 @@ class RealData:
         plt.close()
 
     def set_inertia(self, inertia_):
-        self.sc_inertia = inertia_
+        self.sc_inertia = np.diag(inertia_[:3])
 
     def create_datetime_from_timestamp(self, time_format):
         self.data['DateTime'] = [datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc).strftime(time_format)
@@ -191,7 +192,39 @@ class RealData:
         self.data[['mag_x', 'mag_y', 'mag_z']] *= scale_
 
     def calibrate_gyro(self):
-        pass
+        print("Calibrating Gyroscope ...")
+        sigma_omega2 = 0.3 * np.deg2rad(1)
+        R = np.eye(3) * sigma_omega2
+        P = np.eye(6) * 1.0
+        Q = np.eye(6) * 1e-7
+        ekf_omega = EKFOmega(self.sc_inertia, R, Q, P)
+        ekf_omega.set_first_state(np.concatenate((self.data[['acc_x', 'acc_y', 'acc_z']].values[0], np.zeros(3))))
+        ekf_omega_hist = {'new_omega': [self.data[['acc_x', 'acc_y', 'acc_z']].values[0]],
+                          'bias': [np.zeros(3)]}
+        for i, gyro_k in enumerate(self.data[['acc_x', 'acc_y', 'acc_z']].values[1:]):
+            print(f" - Gyro Progress - {i} / {len(self.data['mjd'])}")
+            ekf_omega.update(1.0, gyro_k)
+            ekf_omega_hist['new_omega'].append(ekf_omega.state[:3])
+            ekf_omega_hist['bias'].append(ekf_omega.state[3:])
+
+        self.data[['acc_x', 'acc_y', 'acc_z']] -= ekf_omega.state[3:]
+        ekf_omega.plot_cov(self.data['mjd'], self.folder_path + "results/")
+        fig, axes = plt.subplots(2, 1, sharex=True)
+        axes[0].plot(self.data['mjd'], ekf_omega_hist['new_omega'])
+        axes[0].set_xlabel('Modified Julian Date')
+        axes[0].set_ylabel('Calibrated Angular velocity')
+        axes[0].grid(True)
+        axes[1].plot(self.data['mjd'], ekf_omega_hist['bias'])
+        axes[1].set_xlabel('Modified Julian Date')
+        axes[1].set_ylabel('Bias')
+        axes[1].grid(True)
+        plt.xticks(rotation=15)
+        plt.ticklabel_format(useOffset=False)
+        plt.tight_layout()
+        fig.savefig(self.folder_path + "results/" + "online_omega_ekf_calibration.jpg")
+        plt.close()
+        return ekf_omega.historical[-1]
+
 
     def calibrate_mag(self, scale: np.array = None, bias: np.array = None, mag_i: np.array = None,
                       by_file=False, force=False):

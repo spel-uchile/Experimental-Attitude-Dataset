@@ -108,39 +108,54 @@ if __name__ == '__main__':
     dynamic_orbital.plot_gt(PROJECT_FOLDER + 'results/gt')
     dynamic_orbital.plot_mag(PROJECT_FOLDER + 'results/mag_model_igrf13')
     dynamic_orbital.plot_sun_sc(PROJECT_FOLDER + 'results/sun_pos_from_sc')
-    # calibration using two-step and channels
+
     sensors.plot_main_data(channels)
+    # calibrate gyro
+    pcov_gyro = sensors.calibrate_gyro()
+    print(pcov_gyro)
+    sensors.plot_key(['acc_x', 'acc_y', 'acc_z'], color=['blue', 'orange', 'green'],
+                      name="cal_gyro_sensor_dps", title="Calibrate Gyro Sensor [rad/s]",
+                      label=['x [mG]', 'y [mG]', 'z [mG]', '||mag||'], drawstyle=['steps-post'] * 4, marker=['.'] * 4)
+
+    # calibration using two-step and channels
     sensors.plot_mag_error(channels, 'before')
     sensors.calibrate_mag(mag_i=channels['mag_i'])
     sensors.plot_key(['mag_x', 'mag_y', 'mag_z', '||mag||'], color=['blue', 'orange', 'green', 'black'],
                      name="mag_sensor_mg_two_step", title="TWO STEP Calibration - Mag [mG]",
                      label=['x [mG]', 'y [mG]', 'z [mG]', '||mag||'], drawstyle=['steps-post'] * 4, marker=['.'] * 4)
-    sensors.plot_mag_error(channels, 'after')
     sensors.show_mag_geometry("TWO STEP Method")
-    # calibrate gyro
-    sensors.calibrate_gyro()
-    sensors.plot_key(['acc_x', 'acc_y', 'acc_z'], color=['blue', 'orange', 'green'],
-                      name="cal_gyro_sensor_dps", title="Calibrate Gyro Sensor [rad/s]",
-                      label=['x [mG]', 'y [mG]', 'z [mG]', '||mag||'], drawstyle=['steps-post'] * 4, marker=['.'] * 4)
+    sensors.plot_mag_error(channels, 'after')
+
 
     # VIDEO -----------------------------------------------------------------------------------------------------------
     if CREATE_FRAME and VIDEO_DATA is not None:
-        save_frame(PROJECT_FOLDER, VIDEO_DATA)
+        # width, height
+        frame_shape = save_frame(PROJECT_FOLDER, VIDEO_DATA, VIDEO_TIME_LAST_FRAME)
 
     if GET_VECTOR_FROM_PICTURE:
         list_file = [elem for elem in os.listdir(PROJECT_FOLDER + VIDEO_DATA.split('.')[0]) if 'png' in elem]
-        num_list = [int(elem.split(".")[0].replace("frame", "")) for elem in list_file if 'png' in elem]
+        num_list = [float(elem[:-4]) for elem in list_file if 'png' in elem]
         datalist = pd.DataFrame({'filename': list_file, 'id': num_list})
         datalist.sort_values(by='id', inplace=True)
-        fourcc = cv2.VideoWriter_fourcc(*'XVID')
-        video_salida = cv2.VideoWriter(PROJECT_FOLDER + "att_.avi", fourcc, 10.0, (100, 100))
-        for filename in datalist['filename'].values:
-            height = 0
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        video_salida = cv2.VideoWriter(PROJECT_FOLDER + f"att_process_{VIDEO_DATA}.avi", fourcc, 10.0, frame_shape[1], frame_shape[0])
+        rot_info = {'time_picture':[], 'pitch': [], 'roll': []}
+        for filename, ts_i in datalist.values:
+            height = dynamic_orbital.get_altitude(ts_i)
             edge_, img_cv2_, p_, r_ = get_vector(PROJECT_FOLDER + VIDEO_DATA.split('.')[0] + "/" + filename, height)
+            rot_info['pitch'].append(p_)
+            rot_info['roll'].append(r_)
+            rot_info['time_picture'].append(ts_i)
             if img_cv2_ is not None:
                 video_salida.write(img_cv2_)
-                print("added")
+                print(f" - filename {filename} added")
         video_salida.release()
+
+        plt.figure()
+        plt.plot(rot_info['time_picture'], rot_info['pitch'])
+        plt.plot(rot_info['time_picture'], rot_info['roll'])
+        plt.grid()
+        plt.show()
 
     # UKF MAG CALIBRATION ----------------------------------------------------------------------------------------------
     if ONLINE_MAG_CALIBRATION:
@@ -171,8 +186,8 @@ if __name__ == '__main__':
             # MEKF
             P = np.diag([0.5, 0.5, 0.5, 0.01, 0.01, 0.01])  # * 10
             ekf_model = MEKF(inertia, P=P, Q=np.zeros((6, 6)), R=np.zeros((3, 3)))
-            ekf_model.sigma_bias = 1e-5
-            ekf_model.sigma_omega = 1e-6
+            ekf_model.sigma_bias = 1e-3
+            ekf_model.sigma_omega = 1e-4
             ekf_model.current_bias = np.array([0.0, 0.0, 0])
         elif EKF_SETUP == 'FULL':
             # MEKF
@@ -227,7 +242,7 @@ if __name__ == '__main__':
             t0 = t_
             # ukf_model.predict()
             # mag
-            mag_est = ekf_model.inject_vector(body_vec_, mag_ref_, sigma2=10, sensor='mag')
+            mag_est = ekf_model.inject_vector(body_vec_, mag_ref_, sigma2=2.8 ** 2, sensor='mag')
 
             # mag_est_ukf = ukf_model.inject_vector(body_vec_, mag_ref_, sigma2=5000, sensor='mag')
             # css

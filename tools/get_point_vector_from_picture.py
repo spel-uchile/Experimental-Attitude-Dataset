@@ -13,6 +13,7 @@ from tools.clustering import cluster, decrease_color
 import numpy as np
 import os
 import matplotlib.pyplot as plt
+import cv2
 
 re = 6378.137  # km
 RAD2DEG = 180 / np.pi
@@ -114,44 +115,44 @@ def rgb_to_gray(R, G, B):
 def get_body(col, file_name, show=True):
     fig_h, ax_h = plt.subplots()
     fig, ax = plt.subplots(1, 6, figsize=(15, 5), sharey=True)
-    fig.suptitle('Test')
+    fig.suptitle(file_name.split("/")[-1][:-4])
     fig.tight_layout()
     ax[0].imshow(col)
     ax[0].set_title("Original")
-
-    new_data = []
-    new_col, lighter_colors, counts = decrease_color(col, 5)
-    color_label = []
-    ax[1].imshow(new_col / 255)
-    ax[1].set_title("KMeans")
-    thereisblack = False
-    # for elem in lighter_colors:
-    #     finding_color = {}
-    #     finding_color['black'] = True if np.mean(elem) < 20 else False
-    #     finding_color['white'] = True if np.mean(elem) > 240 else False
-    #     finding_color['red'] = False
-    #     finding_color['green'] = False
-    #     finding_color['blue'] = False
-    #     if (finding_color['white'] or finding_color['black']) is False:
-    #         finding_color['red'] = True if elem[0] > np.mean(elem) + 30 else False
-    #         finding_color['green'] = True if elem[1] > np.mean(elem) + 30 else False
-    #         finding_color['blue'] = True if elem[2] > np.mean(elem) + 30 else False
-    #     thereisblack = finding_color['black']
-    #     color_label.append(finding_color)
     #
-    # # Blue filter
-    # for i, color_l in enumerate(color_label):
-    #     if color_l['blue'] and thereisblack:
-    #         blue_no_black = np.max(new_col, axis=2) - np.min(new_col, axis=2) > 12
-    #         new_col[blue_no_black] = lighter_colors[0]
-
-    col.putdata([tuple(colors) for colors in new_col.reshape(-1, 3)])
+    # new_data = []
+    # new_col, lighter_colors, counts = decrease_color(col, 10)
+    # color_label = []
+    # ax[1].imshow(new_col / 255)
+    # ax[1].set_title("KMeans")
+    # thereisblack = False
+    # # for elem in lighter_colors:
+    # #     finding_color = {}
+    # #     finding_color['black'] = True if np.mean(elem) < 20 else False
+    # #     finding_color['white'] = True if np.mean(elem) > 240 else False
+    # #     finding_color['red'] = False
+    # #     finding_color['green'] = False
+    # #     finding_color['blue'] = False
+    # #     if (finding_color['white'] or finding_color['black']) is False:
+    # #         finding_color['red'] = True if elem[0] > np.mean(elem) + 30 else False
+    # #         finding_color['green'] = True if elem[1] > np.mean(elem) + 30 else False
+    # #         finding_color['blue'] = True if elem[2] > np.mean(elem) + 30 else False
+    # #     thereisblack = finding_color['black']
+    # #     color_label.append(finding_color)
+    # #
+    # # # Blue filter
+    # # for i, color_l in enumerate(color_label):
+    # #     if color_l['blue'] and thereisblack:
+    # #         blue_no_black = np.max(new_col, axis=2) - np.min(new_col, axis=2) > 12
+    # #         new_col[blue_no_black] = lighter_colors[0]
+    #
+    # col.putdata([tuple(colors) for colors in new_col.reshape(-1, 3)])
     gray = col.convert('L')
-    lighter_gray = [rgb_to_gray(r, g, b) for r, g, b in zip(lighter_colors[:, 0],
-                                                            lighter_colors[:, 1],
-                                                            lighter_colors[:, 2])]
+    # lighter_gray = [rgb_to_gray(r, g, b) for r, g, b in zip(lighter_colors[:, 0],
+    #                                                         lighter_colors[:, 1],
+    #                                                         lighter_colors[:, 2])]
     bw = np.asarray(gray).copy()
-    img_gray_smooth = gray.filter(ImageFilter.SMOOTH)
+    # img_gray_smooth = gray.filter(ImageFilter.SMOOTH)
     bw = bw / 255
     # bw = bw ** (1 / 2)
     # if counts[-1] > 4 * counts[-2] and color_label[-1]['black']:
@@ -168,7 +169,7 @@ def get_body(col, file_name, show=True):
     hist = np.histogram(bw, bins=256)[1]
     max_hist = np.max(hist)
     min_hist = np.min(hist)
-    mean_cut = np.max([(max_hist + min_hist) / 2, np.mean(hist)])
+    mean_cut = 0.25
     bw[np.where(bw < mean_cut)] = 0.0
     bw[np.where(bw >= mean_cut)] = 1.0
     bw_temp = []
@@ -351,7 +352,7 @@ def calc_hyperbola(points, fl, pw, ph, h, shape_, center_is_into_):
 
 
     # pitch = np.pi * 0.5 - np.arccos(e_c @ np.array([0, 0, 1]))
-    roll = np.arctan2(vec_pix[1], vec_pix[0])
+    roll = np.arctan2(e_c[1], e_c[0])
     # center_pixel[0] = int(mean_point[0] / pw + shape_[1] * 0.5)
     # center_pixel[1] = int(mean_point[1] / pw + shape_[0] * 0.5)
     return edge_array, points_center, e_c, center_pixel, pitch, roll
@@ -387,6 +388,7 @@ def calc_sun_curvature(points, fl, pw, ph, shape_, h):
 def get_vector(file_name, height, height_img=None, width_img=None):
     edge_ = None
     pitch_, roll_ = np.nan, np.nan
+    img_cv2_ = None
     try:
         col = Image.open(file_name)
         if height_img is not None:
@@ -397,7 +399,6 @@ def get_vector(file_name, height, height_img=None, width_img=None):
         bw_bodies = get_body(col.copy(), file_name, show=False)
         radius_, point_list_ = get_type_radius(bw_bodies)
         print(file_name, radius_)
-        img_cv2_ = cv2.cvtColor(np.asarray(col), cv2.COLOR_RGB2BGR)
         for radii, pl, bw_temp in zip(radius_, point_list_, bw_bodies):
             if len(pl[0]) > np.min([dimx, dimy]):
                 if np.max([dimx, dimy]) * 0.1 < radii[0] < np.max([dimx, dimy]) * 0.5 and radii[0] > 100 * radii[1]:
@@ -428,9 +429,26 @@ def get_vector(file_name, height, height_img=None, width_img=None):
                     col[earth_edge_array[:, 0], earth_edge_array[:, 1], :] = [0, 255, 0]
                     im = Image.fromarray(col)
                     draw = ImageDraw.Draw(im)
-                    draw.line((bw_temp.shape[1] / 2, bw_temp.shape[0] / 2, center_pixel[0], center_pixel[1]), fill='blue', width=2)
+                    x0, y0 = bw_temp.shape[1] / 2, bw_temp.shape[0] / 2
+                    x1, y1 = x0 + earth_c[0] * 100, y0 + earth_c[1] * 100
+                    print(x0, y0, x1, y1)
+                    draw.line((x0, y0, x1, y1), fill=(0, 255, 255), width=2)
                     edge_, img_cv2_ = None, np.asarray(im)
-    except:
+                    # add arrow
+                    name_folder = 'vectorization'
+                    folder_ = ''.join([el + '/' for el in file_name.split('/')[:-1]])
+                    if not os.path.exists(folder_ + name_folder):
+                        os.makedirs(folder_ + name_folder)
+                    fig_cv2 = plt.figure()
+                    plt.title(f"(Pitch: {np.round(pitch_ * np.rad2deg(1), 3)}, Roll: {np.round(roll_ * np.rad2deg(1), 3)}) [deg]\n"
+                              f"{(np.round(earth_c, 4))}")
+                    plt.quiver(bw_temp.shape[1] / 2, bw_temp.shape[0] / 2, 0, -bw_temp.shape[0] / 4, color="green")
+                    plt.quiver(bw_temp.shape[1] / 2, bw_temp.shape[0] / 2, bw_temp.shape[1] / 4, 0, color="red")
+                    plt.imshow(img_cv2_[..., ::-1], cmap='gray')
+                    fig_cv2.savefig("{}.png".format(folder_ + name_folder + '/vec_' + file_name.split('/')[-1][:-4]))
+                    plt.close()
+    except Exception as e:
+        print(e)
         edge_, img_cv2_ = [], None
     return edge_, img_cv2_, pitch_, roll_
 
@@ -439,29 +457,30 @@ if __name__ == '__main__':
     import pandas as pd
     import cv2
     import pickle
+    from src.dynamics.dynamics_kinematics import Dynamics
     from tools.get_video_frame import save_frame
 
     PROJECT_FOLDER = "../data/20230904/"
     VIDEO_DATA = "20230904-video-att9-clip.mp4"
-
-    # save_frame(PROJECT_FOLDER, VIDEO_DATA)
+    video_last_frame = "2023/09/04 17:49:04"
+    # frame_shape = save_frame(PROJECT_FOLDER, VIDEO_DATA, video_last_frame)
+    frame_shape = (90, 160, 3)
     NEW_FOLDER = PROJECT_FOLDER + VIDEO_DATA.split(".")[0] + '/'
     img_type = 'png'
-    h_i, w_i = 80, 45
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    video_salida = cv2.VideoWriter(NEW_FOLDER + "video_test_x2.avi", fourcc, 10.0, (h_i, w_i))
-
     list_file = [elem for elem in os.listdir(NEW_FOLDER) if img_type in elem]
-    num_list = [int(elem.split(".")[0].replace("frame", "")) for elem in list_file if img_type in elem]
+    num_list = [float(elem[:-4]) for elem in list_file if 'png' in elem]
     datalist = pd.DataFrame({'filename': list_file, 'id': num_list})
     datalist.sort_values(by='id', inplace=True)
-    height_sc = 440  # km
     pitch_list = []
     roll_list = []
     k = 0
-    for filename in datalist['filename'].values[:1]:
+    video_salida = cv2.VideoWriter(NEW_FOLDER + "video_test_x2.avi", fourcc, 10.0, (frame_shape[1], frame_shape[0]))
+
+    for filename, ts_i in datalist.values[27:]:
         print(k)
-        edge_, img_cv2_, pitch_a, roll_a = get_vector(NEW_FOLDER + filename, height_sc, h_i, w_i)
+        height_sc = 450
+        edge_, img_cv2_, pitch_a, roll_a = get_vector(NEW_FOLDER + filename, height_sc, frame_shape[1], frame_shape[0])
         pitch_list.append(pitch_a * np.rad2deg(1))
         roll_list.append(roll_a * np.rad2deg(1))
         k += 1
@@ -476,8 +495,8 @@ if __name__ == '__main__':
 
     fig = plt.figure()
     plt.ylabel("Angle rotation [deg]")
-    plt.plot(pitch_list, label='Pitch Angle')
-    plt.plot(roll_list, label='Roll Angle')
+    plt.plot(data['time(sec)'], pitch_list, '.', label='Pitch Angle')
+    plt.plot(data['time(sec)'], roll_list, '.', label='Roll Angle')
     plt.grid()
     plt.legend()
     fig.savefig(NEW_FOLDER + "process/pitch_roll.png")

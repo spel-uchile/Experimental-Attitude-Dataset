@@ -89,6 +89,12 @@ class Dynamics(object):
                          'sideral': sideral}
         return self.channels
 
+    def get_altitude(self, ts_id):
+        ts_jd = timestamp_to_julian(ts_id)
+        time_ = Time(ts_jd, format='jd', scale='utc')
+        sc_pos, sc_vel, sc_lon, sc_lat, sc_alt = calc_sat_pos_i(self.l1, self.l2, time_)
+        return sc_alt
+
     def load_data(self, data_):
         self.channels = dict(data_)
 

@@ -5,7 +5,7 @@ Date: 21-01-2023
 """
 import numpy as np
 
-from ..dynamics.Quaternion import Quaternions
+from src.dynamics.Quaternion import Quaternions
 from sklearn.metrics import mean_squared_error
 from tools.mathtools import *
 from tools.pso import PSOStandard
@@ -190,7 +190,7 @@ class EKF:
 if __name__ == "__main__":
     import pandas as pd
     import matplotlib.pyplot as plt
-    from .ekf_multy import MEKF
+    from src.kalman_filter.ekf_multy import MEKF
 
     NOISE = True
 
