@@ -14,6 +14,9 @@ import numpy as np
 import os
 import matplotlib.pyplot as plt
 import cv2
+import matplotlib as mpl
+
+mpl.rcParams['font.size'] = 12
 
 re = 6378.137  # km
 RAD2DEG = 180 / np.pi
@@ -393,6 +396,7 @@ def get_vector(file_name, height, height_img=None, width_img=None):
         col = Image.open(file_name)
         if height_img is not None:
           col = col.resize((height_img, width_img))
+        img_cv2_ = np.asarray(col)
         pixel_size_width = resolution_video_h # sensor_width_h / col.size[0]
         pixel_size_height = resolution_video_v # sensor_width_v / col.size[1]
         dimx, dimy = col.size[0], col.size[1]
@@ -440,7 +444,8 @@ def get_vector(file_name, height, height_img=None, width_img=None):
                     if not os.path.exists(folder_ + name_folder):
                         os.makedirs(folder_ + name_folder)
                     fig_cv2 = plt.figure()
-                    plt.title(f"(Pitch: {np.round(pitch_ * np.rad2deg(1), 3)}, Roll: {np.round(roll_ * np.rad2deg(1), 3)}) [deg]\n"
+                    plt.title(f"Timestamp: {file_name.split('/')[-1][:-4]}\n"
+                              f"(Pitch: {np.round(pitch_ * np.rad2deg(1), 3)}, Roll: {np.round(roll_ * np.rad2deg(1), 3)}) [deg]\n"
                               f"{(np.round(earth_c, 4))}")
                     plt.quiver(bw_temp.shape[1] / 2, bw_temp.shape[0] / 2, 0, -bw_temp.shape[0] / 4, color="green")
                     plt.quiver(bw_temp.shape[1] / 2, bw_temp.shape[0] / 2, bw_temp.shape[1] / 4, 0, color="red")
@@ -495,7 +500,8 @@ if __name__ == '__main__':
 
     fig = plt.figure()
     plt.ylabel("Angle rotation [deg]")
-    plt.plot(data['time(sec)'], pitch_list, '.', label='Pitch Angle')
+    plt.xlabel("Relative Time [sec]")
+    plt.plot(np.array(data['time(sec)']) - data['time(sec)'][0], pitch_list, '.', label='Pitch Angle')
     plt.plot(data['time(sec)'], roll_list, '.', label='Roll Angle')
     plt.grid()
     plt.legend()

@@ -20,11 +20,10 @@ from src.kalman_filter.ekf_mag_calibration import MagUKF
 from src.data_process import RealData
 from src.dynamics.Quaternion import Quaternions
 from src.dynamics.dynamics_kinematics import Dynamics, calc_quaternion, calc_omega_b, shadow_zone
-
 from tools.get_video_frame import save_frame
 from tools.get_point_vector_from_picture import get_vector
 from tools.monitor import Monitor
-from tools.mathtools import julian_to_datetime
+from tools.mathtools import julian_to_datetime, timestamp_to_julian
 import importlib.util
 import matplotlib as mpl
 
@@ -138,22 +137,26 @@ if __name__ == '__main__':
         datalist = pd.DataFrame({'filename': list_file, 'id': num_list})
         datalist.sort_values(by='id', inplace=True)
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        video_salida = cv2.VideoWriter(PROJECT_FOLDER + f"att_process_{VIDEO_DATA}.avi", fourcc, 10.0, frame_shape[1], frame_shape[0])
+        video_salida = cv2.VideoWriter(PROJECT_FOLDER + f"att_process_{VIDEO_DATA}.avi", fourcc, 10.0,
+                                       (frame_shape[1], frame_shape[0]))
         rot_info = {'time_picture':[], 'pitch': [], 'roll': []}
         for filename, ts_i in datalist.values:
             height = dynamic_orbital.get_altitude(ts_i)
             edge_, img_cv2_, p_, r_ = get_vector(PROJECT_FOLDER + VIDEO_DATA.split('.')[0] + "/" + filename, height)
             rot_info['pitch'].append(p_)
             rot_info['roll'].append(r_)
-            rot_info['time_picture'].append(ts_i)
+            rot_info['time_picture'].append(timestamp_to_julian(ts_i) - 2400000.5)
             if img_cv2_ is not None:
                 video_salida.write(img_cv2_)
                 print(f" - filename {filename} added")
         video_salida.release()
 
         plt.figure()
-        plt.plot(rot_info['time_picture'], rot_info['pitch'])
-        plt.plot(rot_info['time_picture'], rot_info['roll'])
+        plt.ylabel("Angle rotation [deg]")
+        plt.ylabel("MJD [sec]")
+        plt.plot(rot_info['time_picture'], rot_info['pitch'], '.', label='Pitch Angle')
+        plt.plot(rot_info['time_picture'], rot_info['roll'], '.', label='Roll Angle')
+        plt.legend()
         plt.grid()
         plt.show()
 
