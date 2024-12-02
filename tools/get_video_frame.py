@@ -60,8 +60,8 @@ def save_frame(folder, video_file, video_last_frame, reduction=False):
 
         # resize frame
         width, height = frame.shape[1], frame.shape[0]
-        max_dim = min(width, height)
-        factor = max_dim / 90  # pixels
+        min_dim = min(width, height)
+        factor = min_dim / 90  # pixels
         frame = cv2.resize(frame, (int(width / factor), int(height / factor)))
         # cut
         width, height = frame.shape[1], frame.shape[0]
