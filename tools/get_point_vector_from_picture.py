@@ -39,6 +39,39 @@ focal_length = 0.00304
 
 MAX_NUM_LINES = 3
 
+import numpy as np
+
+
+def R1(psi):
+    """
+    Rotation matrix around the X-axis by angle psi (in radians).
+    """
+    return np.array([
+        [1, 0, 0],
+        [0, np.cos(psi), np.sin(psi)],
+        [0, -np.sin(psi), np.cos(psi)]
+    ])
+
+def R2(theta):
+    """
+    Rotation matrix around the Y-axis by angle theta (in radians).
+    """
+    return np.array([
+        [np.cos(theta), 0, -np.sin(theta)],
+        [0, 1, 0],
+        [np.sin(theta), 0, np.cos(theta)]
+    ])
+
+def R3(phi):
+    """
+    Rotation matrix around the Z-axis by angle phi (in radians).
+    """
+    return np.array([
+        [np.cos(phi), np.sin(phi), 0],
+        [-np.sin(phi), np.cos(phi), 0],
+        [0, 0, 1]
+    ])
+
 
 def intersection(line1, line2):
     """Finds the intersection of two lines given in Hesse normal form.
@@ -116,12 +149,12 @@ def rgb_to_gray(R, G, B):
 
 
 def get_body(col, file_name, show=True):
-    fig_h, ax_h = plt.subplots()
-    fig, ax = plt.subplots(1, 6, figsize=(15, 5), sharey=True)
-    fig.suptitle(file_name.split("/")[-1][:-4])
-    fig.tight_layout()
-    ax[0].imshow(col)
-    ax[0].set_title("Original")
+    # fig_h, ax_h = plt.subplots()
+    # fig, ax = plt.subplots(1, 6, figsize=(15, 5), sharey=True)
+    # fig.suptitle(file_name.split("/")[-1][:-4])
+    # fig.tight_layout()
+    # ax[0].imshow(col)
+    # ax[0].set_title("Original")
     #
     # new_data = []
     # new_col, lighter_colors, counts = decrease_color(col, 10)
@@ -150,38 +183,38 @@ def get_body(col, file_name, show=True):
     #
     # col.putdata([tuple(colors) for colors in new_col.reshape(-1, 3)])
     gray = col.convert('L')
-    gray = np.asarray(col)[:, :, 2]
+    # gray = np.asarray(col)[:, :, 2]
     # lighter_gray = [rgb_to_gray(r, g, b) for r, g, b in zip(lighter_colors[:, 0],
     #                                                         lighter_colors[:, 1],
     #                                                         lighter_colors[:, 2])]
+    gray = gray.filter(ImageFilter.SMOOTH)
     bw = np.asarray(gray).copy()
-    # img_gray_smooth = gray.filter(ImageFilter.SMOOTH)
     bw = bw / 255
-    ax[1].imshow(bw)
-    ax[1].set_title("Gray")
+    # ax[1].imshow(bw)
+    # ax[1].set_title("Gray")
 
-    bw = bw ** (0.85)
+    bw = bw ** 0.7
     # if counts[-1] > 4 * counts[-2] and color_label[-1]['black']:
     #     bw = bw ** (1 / 2)
 
-    ax_h.plot(np.arange(0, bw.shape[1]), np.sum(bw, axis=0), label="X")
-    ax_h.plot(np.arange(0, bw.shape[0]), np.sum(bw, axis=1), label="Y")
-    ax_h.set_title("Histogram")
-    ax_h.grid()
-    ax_h.legend()
-    ax[2].imshow(bw)
-    ax[2].set_title("Gray ^ (0.7)")
+    # ax_h.plot(np.arange(0, bw.shape[1]), np.sum(bw, axis=0), label="X")
+    # ax_h.plot(np.arange(0, bw.shape[0]), np.sum(bw, axis=1), label="Y")
+    # ax_h.set_title("Histogram")
+    # ax_h.grid()
+    # ax_h.legend()
+    # ax[2].imshow(bw)
+    # ax[2].set_title("Gray ^ (0.7)")
 
-    hist = np.histogram(bw, bins=256)[1]
-    max_hist = np.max(hist)
-    min_hist = np.min(hist)
+    # hist = np.histogram(bw, bins=256)[1]
+    # max_hist = np.max(hist)
+    # min_hist = np.min(hist)
     mean_cut = 0.25
     bw[np.where(bw < mean_cut)] = 0.0
     bw[np.where(bw >= mean_cut)] = 1.0
     bw_temp = []
 
-    ax[3].imshow(bw)
-    ax[3].set_title("Binarize")
+    # ax[3].imshow(bw)
+    # ax[3].set_title("Binarize")
     # bw_earth, bw_sun = separate_body(bw)
     labeled_array, num_features = etiquetar_objetos(bw)
     if num_features > 1:
@@ -193,29 +226,30 @@ def get_body(col, file_name, show=True):
                 temp = np.zeros(bw.shape)
                 temp[points] = 1
                 bw_temp.append(temp)
-                ax[4 + k].imshow(temp)
-                ax[4 + k].set_title("Body - {}".format(k))
+                # ax[4 + k].imshow(temp)
+                # ax[4 + k].set_title("Body - {}".format(k))
                 k += 1
                 if k == 2:
                     break
             else:
-                ax[5].imshow(bw * 0)
-                ax[5].set_title("None")
+                pass
+                # ax[5].imshow(bw * 0)
+                # ax[5].set_title("None")
     else:
         bw_temp.append(bw)
-        ax[4].imshow(bw)
-        ax[4].set_title("Body")
-        ax[5].imshow(bw * 0)
-        ax[5].set_title("None")
+        # ax[4].imshow(bw)
+        #ax[4].set_title("Body")
+        #ax[5].imshow(bw * 0)
+        #ax[5].set_title("None")
     # create folder
     name_folder = 'process'
     folder_ = ''.join([el + '/' for el in file_name.split('/')[:-1]])
     if not os.path.exists(folder_ + name_folder):
         os.makedirs(folder_ + name_folder)
-    fig.savefig("{}_process.png".format(folder_ + name_folder + '/' + file_name.split('/')[-1][:-4]))
-    fig_h.savefig("{}_hist.png".format(folder_ + name_folder + '/' + file_name.split('/')[-1][:-4]))
-    plt.close(fig=fig)
-    plt.close(fig=fig_h)
+    # fig.savefig("{}_process.png".format(folder_ + name_folder + '/' + file_name.split('/')[-1][:-4]))
+    # fig_h.savefig("{}_hist.png".format(folder_ + name_folder + '/' + file_name.split('/')[-1][:-4]))
+    # plt.close(fig=fig)
+    # plt.close(fig=fig_h)
     return bw_temp
 
 
@@ -341,27 +375,34 @@ def calc_hyperbola(points, fl, pw, ph, h, shape_, center_is_into_):
     center_pixel[0] = np.int16(vec_pix[0] / pw + shape_[0] * 0.5)
     center_pixel[1] = np.int16(vec_pix[1] / ph + shape_[1] * 0.5)
 
-    up_a_c = e_c[0] ** 2 + e_c[1] ** 2 - np.cos(alpha) ** 2
-    up_c_c = - np.cos(alpha) ** 2
-    up_f_c = - focal_length ** 2 * (1 - np.cos(alpha) ** 2) * np.cos(alpha) ** 2 / up_a_c
+    # up_a_c = e_c[0] ** 2 + e_c[1] ** 2 - np.cos(alpha) ** 2
+    # up_c_c = - np.cos(alpha) ** 2
+    # up_f_c = - focal_length ** 2 * (1 - np.cos(alpha) ** 2) * np.cos(alpha) ** 2 / up_a_c
+    #
+    # temp_ = 1 / np.sqrt(e_c[0] ** 2 + e_c[1] ** 2)
+    # matrix_ec = np.array([[e_c[0], e_c[1]], [-e_c[1], e_c[0]]])
+    # bias_ec = np.array([focal_length * e_c[2] / temp_ / up_a_c, 0])
+    # def p_transform(p_):
+    #     return temp_ * matrix_ec @ p_ + bias_ec
 
-    temp_ = 1 / np.sqrt(e_c[0] ** 2 + e_c[1] ** 2)
-    matrix_ec = np.array([[e_c[0], e_c[1]], [-e_c[1], e_c[0]]])
-    bias_ec = np.array([focal_length * e_c[2] / temp_ / up_a_c, 0])
-    def p_transform(p_):
-        return temp_ * matrix_ec @ p_ + bias_ec
+    # points_p_t = np.array([p_transform(np.array([p_[1], p_[0]])) for p_ in points_center])
 
-    points_p_t = [p_transform(np.array([p_[1], p_[0]])) for p_ in points_center]
+    # def get_residual():
+    #     try:
+    #         temp_o = - up_c_c / up_a_c * points_p_t[:, 1] ** 2 - up_f_c / up_a_c
+    #         value_ = (np.abs(points_p_t[:, 0]) - np.sqrt(temp_o)) ** 2
+    #         return np.sum(value_)
+    #     except:
+    #         value_ = np.abs(points_p_t[:, 0]) ** 2
+    #         return np.sum(value_)
 
-    def get_residual():
-        return
-
+    # 3, 1, 2
     # q_Xx_1 = np.cos(pitch) * np.sin(roll)
     # q_Xx_2 = -np.sin(pitch)
     # q_Xx_3 = np.cos(pitch) * np.cos(roll)
 
-    pitch = np.arcsin(-e_b[1])
-    roll = np.arctan2(e_b[0], e_b[2])
+    pitch = np.arcsin(e_b[1])
+    roll = -np.arctan2(e_b[0], e_b[2])
     return edge_array, points_center, e_c, center_pixel, pitch, roll
 
 
@@ -396,6 +437,7 @@ def get_vector(file_name, height, height_img=None, width_img=None):
     edge_ = None
     pitch_, roll_ = np.nan, np.nan
     img_cv2_ = None
+    earth_c = np.array([np.nan, np.nan,np.nan])
     try:
         col = Image.open(file_name)
         if height_img is not None:
@@ -404,6 +446,7 @@ def get_vector(file_name, height, height_img=None, width_img=None):
         dimx, dimy = col.size[0], col.size[1]
         pixel_size_width = sensor_width_h / dimx
         pixel_size_height = sensor_width_v / dimy
+        earth_limit_pixels = ((dimx * 0.2) ** 2 + (dimy * 0.2) ** 2) ** 0.5
         t1 = time.time()
         bw_bodies = get_body(col.copy(), file_name, show=False)
         radius_, point_list_ = get_type_radius(bw_bodies)
@@ -422,6 +465,8 @@ def get_vector(file_name, height, height_img=None, width_img=None):
                     edge_, img_cv2_ = get_lines(col, center_pixel)
                 elif np.max([dimx, dimy]) * 100 >= radii[0] > np.max([dimx, dimy]) and radii[0] > 10 * radii[1]:
                     print("earth")
+                    if len(pl[0]) < earth_limit_pixels:
+                        continue
                     # Earth: Recalculate with hyperbolic geometry
                     center_is_into = bool(bw_temp[int(bw_temp.shape[0] / 2), int(bw_temp.shape[1] / 2)])
                     t1 = time.time()
@@ -435,6 +480,8 @@ def get_vector(file_name, height, height_img=None, width_img=None):
                                                                                                                   col.size[
                                                                                                                       1]],
                                                                                                                  center_is_into)
+
+
                     print(f"Full hyperbola calculation ... {time.time() - t1}")
                     col = np.asarray(col).copy()
                     col = col[..., ::-1]
@@ -454,7 +501,10 @@ def get_vector(file_name, height, height_img=None, width_img=None):
                     draw.ellipse([(x0 - pix_elipse_w, y0 - pix_elipse_h),
                                   (x0 + pix_elipse_w, y0 + pix_elipse_h)] , fill=None, outline="white")
 
-                    draw.text((0, 0), f"{np.round(angle_ * np.rad2deg(1), 3)} deg", fill="white", scale=0.5)
+                    # draw.text((0, 0), f"{np.round(angle_ * np.rad2deg(1), 3)} deg", fill="white", scale=0.5)
+
+                    draw.text((0, 0), f"R1: {np.round(pitch_ * np.rad2deg(1), 2)} deg", fill="white", scale=0.5)
+                    draw.text((0, 10), f"R2: {np.round(roll_ * np.rad2deg(1), 2)} deg", fill="white", scale=0.5)
 
                     edge_, img_cv2_ = None, np.asarray(im)
                     # add arrow
@@ -464,7 +514,7 @@ def get_vector(file_name, height, height_img=None, width_img=None):
                         os.makedirs(folder_ + name_folder)
                     fig_cv2 = plt.figure()
                     plt.title(f"Timestamp: {file_name.split('/')[-1][:-4]}\n"
-                              f"Pitch: {np.round(pitch_ * np.rad2deg(1), 3)}, Roll: {np.round(roll_ * np.rad2deg(1), 3)} [deg] @ Body frame\n"
+                              rf"$\psi$: {np.round(pitch_ * np.rad2deg(1), 3)}, $\theta$: {np.round(roll_ * np.rad2deg(1), 3)} [deg] @ Body frame" + "\n"
                               f"Earth center: vector {(np.round(earth_c, 4))}")
                     plt.quiver(bw_temp.shape[1] / 2, bw_temp.shape[0] / 2, 0, -bw_temp.shape[0] / 3, color="green")
                     plt.quiver(bw_temp.shape[1] / 2, bw_temp.shape[0] / 2, bw_temp.shape[1] / 3, 0, color="red")
@@ -476,12 +526,13 @@ def get_vector(file_name, height, height_img=None, width_img=None):
     except Exception as e:
         print(e)
         edge_, img_cv2_ = [], None
-    return edge_, img_cv2_, pitch_, roll_
+    return edge_, img_cv2_, pitch_, roll_, ROT_CAM2BODY @ earth_c
 
 
 if __name__ == '__main__':
     import pandas as pd
     import cv2
+    from mpl_toolkits.mplot3d import Axes3D
     import pickle
     from src.dynamics.dynamics_kinematics import Dynamics
     from tools.get_video_frame import save_frame
@@ -489,7 +540,8 @@ if __name__ == '__main__':
     PROJECT_FOLDER = "../data/20230904/"
     VIDEO_DATA = "20230904-video-att9-clip.mp4"
     video_last_frame = "2023/09/04 17:49:04"
-    frame_shape = save_frame(PROJECT_FOLDER, VIDEO_DATA, video_last_frame)
+    vide_name = VIDEO_DATA.split('.')[0]
+    # frame_shape = save_frame(PROJECT_FOLDER, VIDEO_DATA, video_last_frame)
     frame_shape = (90, 160, 3)
     NEW_FOLDER = PROJECT_FOLDER + VIDEO_DATA.split(".")[0] + '/'
     img_type = 'png'
@@ -499,46 +551,78 @@ if __name__ == '__main__':
     datalist = pd.DataFrame({'filename': list_file, 'id': num_list})
     datalist.sort_values(by='id', inplace=True)
     pitch_list = []
+    residual_list = []
     roll_list = []
+    earth_b_list = []
     k = 0
-    video_salida = cv2.VideoWriter(NEW_FOLDER + "video_test_x2.avi", fourcc, 10.0, (frame_shape[1], frame_shape[0]))
+    dt_ = 1 / 30
 
-    for filename, ts_i in datalist.values[27:]:
-        print(k)
-        height_sc = 450
-        edge_, img_cv2_, pitch_a, roll_a = get_vector(NEW_FOLDER + filename, height_sc, frame_shape[1], frame_shape[0])
-        pitch_list.append(pitch_a * np.rad2deg(1))
-        roll_list.append(roll_a * np.rad2deg(1))
-        k += 1
-        video_salida.write(img_cv2_)
+    # if pitch_roll.xlsx exist
+    if not os.path.exists(NEW_FOLDER + f'pitch_roll_LVLH_{vide_name}.xlsx'):
+        video_salida = cv2.VideoWriter(NEW_FOLDER + f"att_process_lvlh_{vide_name}.avi", fourcc, 10.0, (frame_shape[1], frame_shape[0]))
+        for filename, ts_i in datalist.values[:]:
+            print(k)
+            height_sc = 450
+            edge_, img_cv2_, pitch_a, roll_a, earth_b = get_vector(NEW_FOLDER + filename, height_sc, frame_shape[1], frame_shape[0])
+            pitch_list.append(pitch_a * np.rad2deg(1))
+            roll_list.append(roll_a * np.rad2deg(1))
+            earth_b_list.append(earth_b)
+            k += 1
+            video_salida.write(img_cv2_)
+            # Liberar el objeto VideoWriter
+        video_salida.release()
+        dict_data = {'time(sec)': np.arange(0, len(pitch_list)) * dt_,
+                     'pitch': pitch_list,
+                     'roll': roll_list,
+                     'e_b_x': np.array(earth_b_list)[:, 0],
+                     'e_b_y': np.array(earth_b_list)[:, 1],
+                     'e_b_z': np.array(earth_b_list)[:, 2]}
+        data = pd.DataFrame(dict_data)
+        data.to_excel(NEW_FOLDER + f'pitch_roll_LVLH_{vide_name}.xlsx', index=False)
+    else:
+        data = pd.read_excel(NEW_FOLDER + f'pitch_roll_LVLH_{vide_name}.xlsx')
+        earth_b_list = data[['e_b_x', 'e_b_y', 'e_b_z']].values
 
-        # Liberar el objeto VideoWriter
-    video_salida.release()
-
-    dt_ = 1/30
-    data = pd.DataFrame({'time(sec)': np.arange(0, len(pitch_list)) * dt_, 'pitch': pitch_list, 'roll': roll_list})
-    data.to_excel(NEW_FOLDER + 'pitch_roll.xlsx', index=False)
+    fig, ax = plt.subplots(subplot_kw={"projection": "3d"})
+    [ax.quiver(*np.zeros(3), *vec_, alpha=0.3, arrow_length_ratio=0.1) for vec_ in earth_b_list]
+    ax.quiver(*np.zeros(3), 1, 0, 0, length=2, arrow_length_ratio=0.1, color='red')
+    ax.quiver(*np.zeros(3), 0, 1, 0, length=2, arrow_length_ratio=0.1, color='green')
+    ax.quiver(*np.zeros(3), 0, 0, 1, length=2, arrow_length_ratio=0.1, color='blue')
+    ax.set_xlim([-2, 2])
+    ax.set_ylim([-2, 2])
+    ax.set_zlim([-2, 2])
+    plt.grid()
+    fig.savefig(NEW_FOLDER + "earth_vector_pointing_body.png")
 
     fig = plt.figure()
+    plt.xlabel("Roll [deg]")
+    plt.ylabel("Pitch [deg]")
+    plt.grid()
+    theta = data['roll'] * np.deg2rad(1)
+    plt.plot(data['pitch'] * np.sin(theta), data['pitch'] * np.cos(theta), '.-')
+    fig.savefig(NEW_FOLDER + "circular_pitch_roll_lvlh.png")
+
+    fig = plt.figure()
+    plt.title("Angular rotation (3, 1, 2) - BF @ LVLH")
     plt.ylabel("Angle rotation [deg]")
     plt.xlabel("Relative Time [sec]")
-    plt.plot(np.array(data['time(sec)']) - data['time(sec)'][0], pitch_list, '.', label='Pitch Angle')
-    plt.plot(data['time(sec)'], roll_list, '.', label='Roll Angle')
+    plt.plot(np.array(data['time(sec)']), data['pitch'], '.', label='Pitch Angle')
+    plt.plot(data['time(sec)'], data['roll'], '.', label='Roll Angle')
     plt.grid()
     plt.legend()
-    fig.savefig(NEW_FOLDER + "process/pitch_roll.png")
+    fig.savefig(NEW_FOLDER + "pitch_roll_lvlh.png")
 
     fig = plt.figure()
     plt.ylabel("Angle rotation [deg]")
 
-    convolve_pitch = np.convolve([elem if elem >= 0 else elem + 360 for elem in pitch_list], np.ones(5), "valid") / 5
+    convolve_pitch = np.convolve([elem if elem >= 0 else elem + 360 for elem in data['pitch']], np.ones(5), "valid") / 5
 
-    convolve_roll = np.convolve([elem if elem >= 0 else elem + 360 for elem in roll_list], np.ones(5), "valid") / 5
+    convolve_roll = np.convolve([elem if elem >= 0 else elem + 360 for elem in data['roll']], np.ones(5), "valid") / 5
 
     plt.plot(-np.diff(convolve_pitch) / dt_, label='Rate - Pitch Angle')
     plt.plot(-np.diff(convolve_roll) / dt_, label='Rate - Roll Angle')
     plt.grid()
     plt.legend()
     temp = VIDEO_DATA.split(".")[0]
-    fig.savefig(NEW_FOLDER + f"process/{temp}_rate_pitch_roll.png")
+    fig.savefig(NEW_FOLDER + f"process/{temp}_rate_pitch_roll_lvlh.png")
     plt.show()

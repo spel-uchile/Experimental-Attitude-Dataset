@@ -8,6 +8,7 @@ import numpy as np
 import pickle
 import datetime
 import sys
+from rich import print
 import os
 import pandas as pd
 
@@ -110,8 +111,8 @@ if __name__ == '__main__':
 
     sensors.plot_main_data(channels)
     # calibrate gyro
-    pcov_gyro = sensors.calibrate_gyro()
-    print(pcov_gyro)
+    # pcov_gyro = sensors.calibrate_gyro()
+    # print(pcov_gyro)
     sensors.plot_key(['acc_x', 'acc_y', 'acc_z'], color=['blue', 'orange', 'green'],
                       name="cal_gyro_sensor_dps", title="Calibrate Gyro Sensor [rad/s]",
                       label=['x [mG]', 'y [mG]', 'z [mG]', '||mag||'], drawstyle=['steps-post'] * 4, marker=['.'] * 4)
@@ -132,33 +133,81 @@ if __name__ == '__main__':
         frame_shape = save_frame(PROJECT_FOLDER, VIDEO_DATA, VIDEO_TIME_LAST_FRAME)
 
     if GET_VECTOR_FROM_PICTURE:
-        list_file = [elem for elem in os.listdir(PROJECT_FOLDER + VIDEO_DATA.split('.')[0]) if 'png' in elem]
-        num_list = [float(elem[:-4]) for elem in list_file if 'png' in elem]
-        datalist = pd.DataFrame({'filename': list_file, 'id': num_list})
-        datalist.sort_values(by='id', inplace=True)
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        video_salida = cv2.VideoWriter(PROJECT_FOLDER + f"att_process_{VIDEO_DATA}.avi", fourcc, 10.0,
-                                       (frame_shape[1], frame_shape[0]))
-        rot_info = {'time_picture':[], 'pitch': [], 'roll': []}
-        for filename, ts_i in datalist.values:
-            height = dynamic_orbital.get_altitude(ts_i)
-            edge_, img_cv2_, p_, r_ = get_vector(PROJECT_FOLDER + VIDEO_DATA.split('.')[0] + "/" + filename, height)
-            rot_info['pitch'].append(p_)
-            rot_info['roll'].append(r_)
-            rot_info['time_picture'].append(timestamp_to_julian(ts_i) - 2400000.5)
-            if img_cv2_ is not None:
-                video_salida.write(img_cv2_)
-                print(f" - filename {filename} added")
-        video_salida.release()
+        VIDEO_FOLDER = PROJECT_FOLDER + VIDEO_DATA.split('.')[0] + "/"
+        vide_name = VIDEO_DATA.split('.')[0]
+        if not os.path.exists(VIDEO_FOLDER + "results/"):
+            os.makedirs(VIDEO_FOLDER + "results/")
+        if not os.path.exists(VIDEO_FOLDER + "results/" + f'pitch_roll_LVLH_{vide_name}.xlsx'):
+            list_file = [elem for elem in os.listdir(VIDEO_FOLDER + "/frames/") if 'png' in elem]
+            num_list = [float(elem[:-4]) for elem in list_file if 'png' in elem]
+            datalist = pd.DataFrame({'filename': list_file, 'id': num_list})
+            datalist.sort_values(by='id', inplace=True)
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            video_salida = cv2.VideoWriter(VIDEO_FOLDER + "results/" + f"att_process_lvlh_{vide_name}.avi", fourcc, 10.0,
+                                           (frame_shape[1], frame_shape[0]))
+            rot_info = {'MJD':[], 'pitch': [], 'roll': [], 'e_b_x': [], 'e_b_y': [], 'e_b_z': []}
+            frame_correction_time = 0.5
+            for filename, ts_i in datalist.values:
+                height = dynamic_orbital.get_altitude(ts_i)
+                edge_, img_cv2_, p_, r_, e_b_ = get_vector(VIDEO_FOLDER + "/frames/" + filename, height)
+                rot_info['pitch'].append(p_)
+                rot_info['roll'].append(r_)
+                rot_info['MJD'].append(timestamp_to_julian(ts_i - frame_correction_time) - 2400000.5)
+                rot_info['e_b_x'].append(e_b_[0])
+                rot_info['e_b_y'].append(e_b_[1])
+                rot_info['e_b_z'].append(e_b_[2])
+                if img_cv2_ is not None:
+                    video_salida.write(img_cv2_)
+                    print(f" - filename {filename} added")
+            video_salida.release()
+            data_video = pd.DataFrame(rot_info)
+            data_video.to_excel(VIDEO_FOLDER + "results/" + f'pitch_roll_LVLH_{vide_name}.xlsx', index=False)
+        else:
+            data_video = pd.read_excel(VIDEO_FOLDER + "results/" + f'pitch_roll_LVLH_{vide_name}.xlsx')
 
-        plt.figure()
-        plt.ylabel("Angle rotation [deg]")
-        plt.ylabel("MJD [sec]")
-        plt.plot(rot_info['time_picture'], rot_info['pitch'], '.', label='Pitch Angle')
-        plt.plot(rot_info['time_picture'], rot_info['roll'], '.', label='Roll Angle')
+        earth_b_camera = data_video[['e_b_x', 'e_b_y', 'e_b_z']].values
+
+        dynamic_video = Dynamics(data_video['MJD'] + 2400000.5, line1, line2)
+        if os.path.exists(VIDEO_FOLDER + "results/" + "channels_camera.p") and not FORCE_CALCULATION:
+            with open(VIDEO_FOLDER + "results/" + "channels_camera.p", 'rb') as fp:
+                channels_video = pickle.load(fp)
+            dynamic_video.load_data(channels_video)
+            dynamic_video.calc_mag()
+            channels_video = dynamic_video.channels
+        else:
+            channels_video = dynamic_video.get_dynamics()
+            # save channels as json
+            with open(VIDEO_FOLDER + "results/" + 'channels_camera.p', 'wb') as file_:
+                pickle.dump(channels_video, file_)
+
+
+        dynamic_video.plot_gt(VIDEO_FOLDER + "results/" + 'gt_video')
+        dynamic_video.plot_mag(VIDEO_FOLDER + "results/" + 'mag_model_igrf13_video')
+        dynamic_video.plot_sun_sc(VIDEO_FOLDER + "results/" + 'sun_pos_from_sc_video')
+        dynamic_video.plot_earth_vector(VIDEO_FOLDER + "results/" + "earth_vector_pointing_body.png", earth_b_camera)
+        # earth_point_inertial = -dynamic_video.get_unit_vector("sat_pos_i")
+
+        fig = plt.figure()
+        plt.title("Angular position - rotation (3, 1, 2) - BF @ LVLH")
+        plt.ylabel("Angle position - rotation [deg]")
+        plt.xlabel("MJD")
+        plt.plot(data_video['MJD'], np.rad2deg(data_video['pitch']), '.', label=r'$\psi$')
+        plt.plot(data_video['MJD'], np.rad2deg(data_video['roll']), '.', label=r'$\theta$')
         plt.legend()
         plt.grid()
+        fig.savefig(VIDEO_FOLDER + "results/" + "pitch_roll_lvlh.png")
+
+        fig = plt.figure()
+        plt.title("Angular velocity - rotation (3, 1, 2) - BF @ LVLH")
+        plt.ylabel("Angle velocity [deg/s]")
+        plt.xlabel("MJD")
+        plt.plot(data_video['MJD'][:-1:3], np.rad2deg(np.diff(data_video['pitch'][::3])) / (np.diff(data_video['MJD'][::3]) * 86400), '.', label=r'$\dot{\psi}$')
+        plt.plot(data_video['MJD'][:-1:3], np.rad2deg(np.diff(data_video['roll'][::3])) / (np.diff(data_video['MJD'][::3]) * 86400), '.', label=r'$\dot{\theta}$')
+        plt.legend()
+        plt.grid()
+        fig.savefig(VIDEO_FOLDER + "results/" + "dot_pitch_roll_lvlh.png")
         plt.show()
+        plt.close(fig)
 
     # UKF MAG CALIBRATION ----------------------------------------------------------------------------------------------
     if ONLINE_MAG_CALIBRATION:

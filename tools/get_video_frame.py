@@ -42,6 +42,9 @@ def save_frame(folder, video_file, video_last_frame, reduction=False):
         if e.errno != errno.EEXIST:
             raise
 
+    if not os.path.exists(folder + video_file.split('.')[0] + "/frames"):
+        os.mkdir(folder + video_file.split('.')[0] + "/frames")
+
     # Inicializar un contador de frames
     frame_count = 0
 
@@ -76,7 +79,7 @@ def save_frame(folder, video_file, video_last_frame, reduction=False):
         print(f" -- saving frame {i}/{length} ")
         # Guardar el frame como una imagen
         frame_file = f"{end_timestamp - dt * i}.png"
-        cv2.imwrite(folder + video_file.split('.')[0] + '/' + frame_file, frame)
+        cv2.imwrite(folder + video_file.split('.')[0] + '/frames/' + frame_file, frame)
 
     # Liberar los recursos
     cap.release()

@@ -16,7 +16,6 @@ import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 from cartopy.mpl.ticker import LongitudeFormatter, LatitudeFormatter
-
 from src.dynamics.MagEnv import MagEnv, rotationY, rotationZ
 
 solar_system_ephemeris.set('de430')
@@ -89,6 +88,9 @@ class Dynamics(object):
                          'sideral': sideral}
         return self.channels
 
+    def get_unit_vector(self, name_var: str = None):
+        return self.channels[name_var] / np.linalg.norm(self.channels[name_var], axis=1)
+
     def get_altitude(self, ts_id):
         ts_jd = timestamp_to_julian(ts_id)
         time_ = Time(ts_jd, format='jd', scale='utc')
@@ -141,7 +143,7 @@ class Dynamics(object):
         plt.plot(time_, mag_x, label='x')
         plt.plot(time_, mag_y, label='y')
         plt.plot(time_, mag_z, label='z')
-        plt.xlabel('Modified Julian')
+        plt.xlabel('Modified Julian date')
         plt.legend()
         plt.xticks(rotation=15)
         plt.ticklabel_format(useOffset=False)
@@ -163,7 +165,7 @@ class Dynamics(object):
         plt.plot(time_, mag_y, label='y')
         plt.plot(time_, mag_z, label='z')
         plt.plot(time_, mag_norm, color='black', label='mag norm')
-        plt.xlabel('Modified Julian')
+        plt.xlabel('Modified Julian date')
         plt.legend()
         plt.xticks(rotation=15)
         plt.ticklabel_format(useOffset=False)
@@ -184,7 +186,7 @@ class Dynamics(object):
         plt.plot(time_, mag_z, label='z')
         plt.plot(time_, mag_norm, color='black', label='mag norm')
         plt.legend()
-        plt.xlabel('Modified Julian')
+        plt.xlabel('Modified Julian date')
         plt.xticks(rotation=15)
         plt.ticklabel_format(useOffset=False)
         plt.tight_layout()
@@ -203,13 +205,40 @@ class Dynamics(object):
         plt.plot(time_, mag_z, label='z')
         plt.plot(time_, mag_norm, color='black', label='mag norm')
         plt.legend()
-        plt.xlabel('Modified Julian')
+        plt.xlabel('Modified Julian date')
         plt.grid()
         plt.xticks(rotation=15)
         plt.ticklabel_format(useOffset=False)
         plt.tight_layout()
         fig.savefig(folder_name + '_ned.jpg')
         plt.close(fig)
+
+    def plot_earth_vector(self, filename, earth_b_list):
+        fig, ax = plt.subplots(subplot_kw={"projection": "3d"})
+        plt.title("LVLH to Body frame")
+        [ax.quiver(*np.zeros(3), *vec_, alpha=0.3, arrow_length_ratio=0.1) for vec_ in earth_b_list]
+        [ax.quiver(*np.zeros(3), *vec_ / np.linalg.norm(vec_), color='black', alpha=0.3, arrow_length_ratio=0.1)
+         for vec_ in self.channels['sat_pos_i']]
+        rot_vec = [np.cross(np.array([0, 0, 1]), eb_) for eb_, ei_ in zip(earth_b_list, self.channels['sat_pos_i'])]
+        ang_vec = [np.arccos(np.array([0, 0, 1]) @ eb_) for eb_, ei_ in zip(earth_b_list, self.channels['sat_pos_i'])]
+        [ax.quiver(*np.zeros(3), *vec_, alpha=0.3, arrow_length_ratio=0.1, color="orange") for vec_ in rot_vec]
+
+        ax.quiver(*np.zeros(3), 1, 0, 0, length=2, arrow_length_ratio=0.1, color='red')
+        ax.quiver(*np.zeros(3), 0, 1, 0, length=2, arrow_length_ratio=0.1, color='green')
+        ax.quiver(*np.zeros(3), 0, 0, 1, length=2, arrow_length_ratio=0.1, color='blue')
+        ax.set_xlim([-2, 2])
+        ax.set_ylim([-2, 2])
+        ax.set_zlim([-2, 2])
+        plt.grid()
+        fig.savefig(filename)
+
+        quat = np.array([np.array([*(r_vec * np.sin(ang * 0.5)), np.cos(ang * 0.5)]) for r_vec, ang in zip(rot_vec, ang_vec)])
+        quat = np.array([q_/ np.linalg.norm(q_) for q_ in quat])
+        fig = plt.figure()
+        plt.plot(self.channels['full_time'] - _MJD_1858, quat)
+        plt.legend(["qx", "qy", "qz", "qw"])
+        plt.grid()
+        plt.xlabel('Modified Julian date')
 
 
 def calc_moon_pos_i(t: Time):
