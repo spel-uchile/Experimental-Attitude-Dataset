@@ -85,7 +85,7 @@ def jd_to_decyear(jd):
 
 
 def timestamp_to_julian(timestamp):
-    unix_epoch = datetime.datetime(1970, 1, 1)
+    unix_epoch = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)
     input_datetime = unix_epoch + datetime.timedelta(seconds=timestamp)
     julian_date = 2440587.5 + (input_datetime - unix_epoch).total_seconds() / 86400
     return julian_date
