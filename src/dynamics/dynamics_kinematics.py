@@ -17,6 +17,8 @@ import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 from cartopy.mpl.ticker import LongitudeFormatter, LatitudeFormatter
 from src.dynamics.MagEnv import MagEnv, rotationY, rotationZ
+from tools.rodrigues_parameters import get_shadow_set_mrp, omega_from_mpr
+
 
 solar_system_ephemeris.set('de430')
 _MJD_1858 = 2400000.5
@@ -219,8 +221,10 @@ class Dynamics(object):
         [ax.quiver(*np.zeros(3), *vec_, alpha=0.3, arrow_length_ratio=0.1) for vec_ in earth_b_list]
         [ax.quiver(*np.zeros(3), *vec_ / np.linalg.norm(vec_), color='black', alpha=0.3, arrow_length_ratio=0.1)
          for vec_ in self.channels['sat_pos_i']]
-        rot_vec = [np.cross(np.array([0, 0, 1]), eb_) for eb_, ei_ in zip(earth_b_list, self.channels['sat_pos_i'])]
-        ang_vec = [np.arccos(np.array([0, 0, 1]) @ eb_) for eb_, ei_ in zip(earth_b_list, self.channels['sat_pos_i'])]
+
+        ei_list = self.channels['sat_pos_i'] / np.atleast_2d(np.linalg.norm(self.channels['sat_pos_i'])).T
+        rot_vec = [np.cross(ei_, eb_) for eb_, ei_ in zip(earth_b_list, ei_list)]
+        ang_vec = [np.arccos(ei_ @ eb_) for eb_, ei_ in zip(earth_b_list, ei_list)]
         [ax.quiver(*np.zeros(3), *vec_, alpha=0.3, arrow_length_ratio=0.1, color="orange") for vec_ in rot_vec]
 
         ax.quiver(*np.zeros(3), 1, 0, 0, length=2, arrow_length_ratio=0.1, color='red')
@@ -232,11 +236,43 @@ class Dynamics(object):
         plt.grid()
         fig.savefig(filename)
 
-        quat = np.array([np.array([*(r_vec * np.sin(ang * 0.5)), np.cos(ang * 0.5)]) for r_vec, ang in zip(rot_vec, ang_vec)])
-        quat = np.array([q_/ np.linalg.norm(q_) for q_ in quat])
+        quat = np.array([np.array([*r_vec * np.sin(ang/2), np.cos(ang/2)] for r_vec, ang in zip(rot_vec, ang_vec))])
+        # quat = quat / np.atleast_2d(np.linalg.norm(quat)).T
+
+        mpr = np.array([r_vec * np.tan(ang / 4) for r_vec, ang in zip(rot_vec, ang_vec)])
+        mpr = np.array([mpr_ if np.linalg.norm(mpr_) < 1 else get_shadow_set_mrp(mpr_) for mpr_ in mpr])
+
+        time_array = (self.channels['full_time'] - self.channels['full_time'][0]) * 86400
+        degre_p = 9
+        coef_x = np.polyfit(time_array[~np.isnan(mpr[:, 0])], mpr[:, 0][~np.isnan(mpr[:, 0])], degre_p)
+        coef_y = np.polyfit(time_array[~np.isnan(mpr[:, 1])], mpr[:, 1][~np.isnan(mpr[:, 1])], degre_p)
+        coef_z = np.polyfit(time_array[~np.isnan(mpr[:, 2])], mpr[:, 2][~np.isnan(mpr[:, 2])], degre_p)
+        poly_x = np.poly1d(coef_x)
+        poly_y = np.poly1d(coef_y)
+        poly_z = np.poly1d(coef_z)
+
+        sigma_x = poly_x(time_array)
+        sigma_y = poly_y(time_array)
+        sigma_z = poly_z(time_array)
+
         fig = plt.figure()
-        plt.plot(self.channels['full_time'] - _MJD_1858, quat)
-        plt.legend(["qx", "qy", "qz", "qw"])
+        plt.title("MPR")
+        plt.plot(time_array, mpr)
+        plt.plot(time_array, sigma_x)
+        plt.plot(time_array, sigma_y)
+        plt.plot(time_array, sigma_z)
+        plt.legend([r"$\sigma_x$", r"$\sigma_y$", r"$\sigma_z$", "sx", "sy", "sz"])
+        plt.grid()
+        plt.xlabel('Modified Julian date')
+
+        time_diff = np.diff(self.channels['full_time'][::3]) * 86400 # seconds
+        d_mpr = np.diff(mpr[::3], axis=0) / np.atleast_2d(time_diff).T
+        omega = np.array([omega_from_mpr(mpr_, dmpr_) for mpr_, dmpr_ in zip(mpr[:-1], d_mpr)])
+
+        fig = plt.figure()
+        plt.title("Angular velocity")
+        plt.plot(self.channels['full_time'][:-1:3] - _MJD_1858, omega * np.rad2deg(1))
+        plt.legend([r"$\sigma_x$", r"$\sigma_y$", r"$\sigma_z$"])
         plt.grid()
         plt.xlabel('Modified Julian date')
 
@@ -337,4 +373,4 @@ if __name__ == '__main__':
     start_date = "01-06-2023 00:00:00"
     end_date = "03-06-2023 00:00:00"
     time_vector = []
-    dynamic_orbital = Dynamics(time_vector, line1, line2)
+    # dynamic_orbital = Dynamics(time_vector, line1, line2)
