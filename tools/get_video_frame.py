@@ -1,5 +1,5 @@
 
-from datetime import datetime
+import datetime
 import cv2
 import os
 import errno
@@ -72,7 +72,7 @@ def save_frame(folder, video_file, video_last_frame, reduction=False):
         to_save.append(frame)
 
     # timestamp for video_last_frame ("2023/09/04 14:49:04")
-    end_timestamp = datetime.strptime(video_last_frame, '%Y/%m/%d %H:%M:%S').timestamp()
+    end_timestamp = datetime.datetime.strptime(video_last_frame, '%Y/%m/%d %H:%M:%S').replace(tzinfo=datetime.timezone.utc).timestamp()
     dt = 1 / cap.get(cv2.CAP_PROP_FPS)
     length = len(to_save)
     for i, frame in enumerate(reversed(to_save)):
