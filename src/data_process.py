@@ -17,6 +17,7 @@ import json
 import os
 from src.kalman_filter.ekf_omega import EKFOmega
 from scipy.spatial import ConvexHull
+from matplotlib.patches import Rectangle
 from sklearn.metrics import mean_squared_error
 from sklearn.cluster import KMeans
 
@@ -26,6 +27,7 @@ _MJD_1858 = 2400000.5
 
 
 class RealData:
+
     def __init__(self, folder, file_directory):
         # Real data
         self.folder_path = folder
@@ -42,6 +44,7 @@ class RealData:
         self.end_time = 0.
         self.sc_inertia = np.array([38478.678, 38528.678, 6873.717, 0, 0, 0]) * 1e-6
         self.set_geometric_mag_bias()
+        self.data_video = {}
 
     def set_geometric_mag_bias(self):
         # points_xy = self.data[['mag_x', 'mag_y']].values
@@ -225,7 +228,6 @@ class RealData:
         plt.close()
         return ekf_omega.historical[-1]
 
-
     def calibrate_mag(self, scale: np.array = None, bias: np.array = None, mag_i: np.array = None,
                       by_file=False, force=False):
         if scale is not None and bias is not None:
@@ -325,6 +327,56 @@ class RealData:
             temp = self.data['DateTime'].values[np.argwhere(model.labels_ == i)]
             print(f"Cluster {i}: Start: {temp[0]} - Stop: {temp[-1]}")
         return model
+
+    def plot_video_data(self, data_video, name_, VIDEO_FOLDER):
+        self.data_video[name_] = data_video
+
+        fig = plt.figure()
+        plt.title("Angular position - rotation (3, 1, 2) - BF @ LVLH")
+        plt.ylabel("Angle position - rotation [deg]")
+        plt.xlabel("MJD")
+        plt.plot(data_video['MJD'], np.rad2deg(data_video['pitch']), '.', label=r'$\psi$')
+        plt.plot(data_video['MJD'], np.rad2deg(data_video['roll']), '.', label=r'$\theta$')
+        plt.legend()
+        plt.grid()
+        fig.savefig(VIDEO_FOLDER + "results/" + "pitch_roll_lvlh.png")
+
+        fig = plt.figure()
+        plt.title("Angular velocity - rotation (3, 1, 2) - BF @ LVLH")
+        plt.ylabel("Angle velocity [deg/s]")
+        plt.xlabel("MJD")
+        plt.plot(data_video['MJD'][::3][:-1],
+                 np.rad2deg(np.diff(data_video['pitch'][::3])) / (np.diff(data_video['MJD'][::3]) * 86400), '.',
+                 label=r'$\dot{\psi}$')
+        plt.plot(data_video['MJD'][::3][:-1],
+                 np.rad2deg(np.diff(data_video['roll'][::3])) / (np.diff(data_video['MJD'][::3]) * 86400), '.',
+                 label=r'$\dot{\theta}$')
+        plt.legend()
+        plt.grid()
+        fig.savefig(VIDEO_FOLDER + "results/" + "dot_pitch_roll_lvlh.png")
+        # plt.show()
+        plt.close("all")
+
+    def plot_windows(self, VIDEO_FOLDER):
+        fig, ax = plt.subplots()
+        # add rectangle to plot
+        x0 = min(self.data["mjd"])
+        # dt_imu = max(self.data["mjd"]) - min(self.data["mjd"])
+        # print(max(self.data["mjd"]) - min(self.data["mjd"]))
+        ax.hlines(0.1, x0, max(self.data["mjd"]), color='blue', lw=3, label='IMU')
+        color = ['orange', 'red', 'green']
+        i = 0
+        for key, item in self.data_video.items():
+            dt_video =  max(item["MJD"]) - min(item["MJD"])
+            print((min(item["MJD"]) - x0) * 86400/ 60)
+            ax.scatter(min(item["MJD"]), 0.5, color=color[i], label=key, marker='x', s=100)
+            # ax.hlines(0.5, min(item["MJD"]), dt_video + min(item["MJD"]), color=color[i], lw=10, label=key)
+            i += 1
+        plt.grid()
+        plt.ylim([0, 1])
+        plt.xlabel("MJD")
+        plt.legend()
+        fig.savefig(VIDEO_FOLDER + "results/" + "wind_data.png")
 
 
 def module_exception_log(method, *args, **kwargs):
