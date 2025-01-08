@@ -121,7 +121,7 @@ class RealData:
 
         self.data[['acc_x', 'acc_y', 'acc_z']] += np.array([gx, gy, gz])
 
-    def plot_main_data(self, channels):
+    def plot_main_data(self):
         self.plot_key(['mag_x', 'mag_y', 'mag_z', '||mag||'], color=['blue', 'orange', 'green', 'black'],
                       name="mag_sensor_mg", title="Raw Mag Sensor [mG]",
                       label=['x [mG]', 'y [mG]', 'z [mG]', '||mag||'], drawstyle=['steps-post'] * 4, marker=['.'] * 4)
@@ -354,7 +354,7 @@ class RealData:
         plt.legend()
         plt.grid()
         fig.savefig(VIDEO_FOLDER + "results/" + "dot_pitch_roll_lvlh.png")
-        # plt.show()
+        plt.show()
         plt.close("all")
 
     def plot_windows(self, VIDEO_FOLDER):

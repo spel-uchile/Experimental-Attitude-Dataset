@@ -78,6 +78,16 @@ if __name__ == '__main__':
         sensors.set_window_time(WINDOW_TIME['Start'], WINDOW_TIME['Stop'], TIME_FORMAT)
     else:
         sensors.set_window_time()
+
+    # sensors.plot_main_data()
+    # calibrate gyro
+    # pcov_gyro = sensors.calibrate_gyro()
+    # print(pcov_gyro)
+    # sensors.plot_key(['acc_x', 'acc_y', 'acc_z'], color=['blue', 'orange', 'green'],
+    #                  name="cal_gyro_sensor_dps", title="Calibrate Gyro Sensor [rad/s]",
+    #                  label=['x [mG]', 'y [mG]', 'z [mG]', '||mag||'], drawstyle=['steps-post'] * 4, marker=['.'] * 4)
+
+
     line1, line2 = sensors.search_nearly_tle()
     print(line1, line2)
     # TIME
@@ -106,27 +116,18 @@ if __name__ == '__main__':
         with open(PROJECT_FOLDER + 'channels.p', 'wb') as file_:
             pickle.dump(channels, file_)
 
-    dynamic_orbital.plot_gt(PROJECT_FOLDER + 'results/gt')
-    dynamic_orbital.plot_mag(PROJECT_FOLDER + 'results/mag_model_igrf13')
-    dynamic_orbital.plot_sun_sc(PROJECT_FOLDER + 'results/sun_pos_from_sc')
-
-    sensors.plot_main_data(channels)
-    # calibrate gyro
-    # pcov_gyro = sensors.calibrate_gyro()
-    # print(pcov_gyro)
-    sensors.plot_key(['acc_x', 'acc_y', 'acc_z'], color=['blue', 'orange', 'green'],
-                      name="cal_gyro_sensor_dps", title="Calibrate Gyro Sensor [rad/s]",
-                      label=['x [mG]', 'y [mG]', 'z [mG]', '||mag||'], drawstyle=['steps-post'] * 4, marker=['.'] * 4)
+        dynamic_orbital.plot_gt(PROJECT_FOLDER + 'results/gt')
+        dynamic_orbital.plot_mag(PROJECT_FOLDER + 'results/mag_model_igrf13')
+        dynamic_orbital.plot_sun_sc(PROJECT_FOLDER + 'results/sun_pos_from_sc')
 
     # calibration using two-step and channels
-    sensors.plot_mag_error(channels, 'before')
-    sensors.calibrate_mag(mag_i=channels['mag_i'])
-    sensors.plot_key(['mag_x', 'mag_y', 'mag_z', '||mag||'], color=['blue', 'orange', 'green', 'black'],
-                     name="mag_sensor_mg_two_step", title="TWO STEP Calibration - Mag [mG]",
-                     label=['x [mG]', 'y [mG]', 'z [mG]', '||mag||'], drawstyle=['steps-post'] * 4, marker=['.'] * 4)
-    sensors.show_mag_geometry("TWO STEP Method")
-    sensors.plot_mag_error(channels, 'after')
-
+    # sensors.plot_mag_error(channels, 'before')
+    # sensors.calibrate_mag(mag_i=channels['mag_i'])
+    # sensors.plot_key(['mag_x', 'mag_y', 'mag_z', '||mag||'], color=['blue', 'orange', 'green', 'black'],
+    #                  name="mag_sensor_mg_two_step", title="TWO STEP Calibration - Mag [mG]",
+    #                  label=['x [mG]', 'y [mG]', 'z [mG]', '||mag||'], drawstyle=['steps-post'] * 4, marker=['.'] * 4)
+    # sensors.show_mag_geometry("TWO STEP Method")
+    # sensors.plot_mag_error(channels, 'after')
 
     # VIDEO -----------------------------------------------------------------------------------------------------------
     if CREATE_FRAME and VIDEO_DATA is not None:

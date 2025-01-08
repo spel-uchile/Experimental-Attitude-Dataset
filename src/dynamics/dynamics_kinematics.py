@@ -217,7 +217,7 @@ class Dynamics(object):
 
     def plot_earth_vector(self, filename, earth_b_list):
         fig, ax = plt.subplots(subplot_kw={"projection": "3d"})
-        plt.title("LVLH to Body frame")
+        plt.title("ECI to Body frame")
         [ax.quiver(*np.zeros(3), *vec_, alpha=0.3, arrow_length_ratio=0.1) for vec_ in earth_b_list]
         [ax.quiver(*np.zeros(3), *vec_ / np.linalg.norm(vec_), color='black', alpha=0.3, arrow_length_ratio=0.1)
          for vec_ in self.channels['sat_pos_i']]
