@@ -171,7 +171,7 @@ class EKF:
         # if K is optimized, then p+ = (I -KH) @ p-,
         # but it is not recommended when numerical instabilities are presents
         I_nn = np.eye(len(self.state))
-        new_P = (I_nn - self.kf_K @ H) @ new_P_k  @ (I_nn - self.kf_K @ H).T + self.kf_K @ self.kf_R @ self.kf_K.T
+        new_P = (I_nn - self.kf_K @ H) @ new_P_k#   @ (I_nn - self.kf_K @ H).T + self.kf_K @ self.kf_R @ self.kf_K.T
         return new_P
 
     def attitude_observer_model(self, new_x, vector_i) -> np.array:

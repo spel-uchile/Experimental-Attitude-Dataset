@@ -37,15 +37,20 @@ loc = EarthLocation(0, 0, 0)
 
 
 class Dynamics(object):
-    def __init__(self, time_array, line1, line2):
-        self.time_array = time_array
+    def __init__(self, jd_time_array, line1, line2):
+        self.jd_time_array = jd_time_array
+        self.step = (self.jd_time_array[1] - self.jd_time_array[0]) * 86400
         self.l1 = line1
         self.l2 = line2
         self.channels = {}
         self.mag_model = MagEnv()
+        self.sc_inertia = np.eye(3)
 
-    def get_dynamics(self):
-        n = len(self.time_array)
+    def set_inertia(self, value):
+        self.sc_inertia = value
+
+    def get_dynamics(self, sim_flag=False, inertia=None):
+        n = len(self.jd_time_array)
         sun_pos_gcrs = np.zeros((n, 3))
         moon_pos_gcrs = np.zeros((n, 3))
         sat_pos_gcrs = np.zeros((n, 3))
@@ -59,7 +64,16 @@ class Dynamics(object):
         sideral = np.zeros(n)
         sun_sc_i = np.zeros((n, 3))
         moon_sc_i = np.zeros((n, 3))
-        for i, t_ in enumerate(self.time_array):
+        is_dark = np.zeros(n)
+        if sim_flag:
+            np.random.seed(42)
+            q_i2b = np.zeros((n, 4))
+            q_i2b[0, :3] = np.random.normal(0, 0.4, 3)
+            q_i2b[0, 3] = np.sqrt(1 - np.linalg.norm(q_i2b[0, :3]) ** 2)
+            q_i2b[0] /= np.linalg.norm(q_i2b[0])
+            w_b = np.zeros((n, 3))
+            w_b[0] = np.array([-0.3, 0.5, -0.05])
+        for i, t_ in enumerate(self.jd_time_array):
             time_ = Time(t_, format='jd', scale='utc')
             sun_pos_gcrs[i] = calc_sun_pos_i(time_)
             moon_pos_gcrs[i] = calc_moon_pos_i(time_)
@@ -73,9 +87,13 @@ class Dynamics(object):
             mag_eci[i], mag_ecef[i], mag_ned[i] = self.mag_model.calc_mag(t_, sideral[i], sc_lat * DEG2RAD, sc_lon * DEG2RAD, sc_alt)
             sun_sc_i[i] = sun_pos_gcrs[i] - sc_pos
             moon_sc_i[i] = moon_pos_gcrs[i] - sc_pos
+            is_dark[i] = shadow_zone(sat_pos_gcrs[i], sun_pos_gcrs[i])
+            if i > 0 and sim_flag:
+                q_i2b[i] = calc_quaternion(q_i2b[i - 1], w_b[i - 1], self.step)
+                w_b[i] = calc_omega_b(w_b[i - 1], self.step, inertia)
             print("  - {}/{}".format(i, n))
 
-        self.channels = {'full_time': self.time_array,
+        self.channels = {'full_time': self.jd_time_array,
                          'sim_time': [0],
                          'sat_pos_i': sat_pos_gcrs,
                          'lonlat': np.array([sat_lon, sat_lat]).T,
@@ -87,8 +105,29 @@ class Dynamics(object):
                          'moon_i': moon_pos_gcrs,
                          'sun_sc_i': sun_sc_i,
                          'moon_sc_i': moon_sc_i,
-                         'sideral': sideral}
+                         'sideral': sideral,
+                         'is_dark': is_dark}
+        if sim_flag:
+            new_data = {'q_i2b': q_i2b, 'w_b': w_b}
+            self.channels = {**self.channels, **new_data}
         return self.channels
+
+    def update_attitude(self, q_i2b_init, w_b_init):
+        print("Rotation Update .........")
+        n = len(self.jd_time_array)
+        np.random.seed(42)
+        q_i2b = np.zeros((n, 4))
+        q_i2b[0] = q_i2b_init
+        w_b = np.zeros((n, 3))
+        w_b[0] = w_b_init
+        for i, t_ in enumerate(self.jd_time_array):
+            if i > 0:
+                q_i2b[i] = calc_quaternion(q_i2b[i - 1], w_b[i - 1], self.step)
+                w_b[i] = calc_omega_b(w_b[i - 1], self.step, self.sc_inertia)
+            print("  - {}/{}".format(i, n))
+
+        self.channels['q_i2b'] = q_i2b
+        self.channels['w_b'] = w_b
 
     def get_unit_vector(self, name_var: str = None):
         return self.channels[name_var] / np.linalg.norm(self.channels[name_var], axis=1)
@@ -225,7 +264,7 @@ class Dynamics(object):
         ei_list = self.channels['sat_pos_i'] / np.atleast_2d(np.linalg.norm(self.channels['sat_pos_i'])).T
         rot_vec = [np.cross(ei_, eb_) for eb_, ei_ in zip(earth_b_list, ei_list)]
         ang_vec = [np.arccos(ei_ @ eb_) for eb_, ei_ in zip(earth_b_list, ei_list)]
-        [ax.quiver(*np.zeros(3), *vec_, alpha=0.3, arrow_length_ratio=0.1, color="orange") for vec_ in rot_vec]
+        [ax.quiver(*np.zeros(3), *vec_, arrow_length_ratio=0.1, color="orange") for vec_ in rot_vec]
 
         ax.quiver(*np.zeros(3), 1, 0, 0, length=2, arrow_length_ratio=0.1, color='red')
         ax.quiver(*np.zeros(3), 0, 1, 0, length=2, arrow_length_ratio=0.1, color='green')

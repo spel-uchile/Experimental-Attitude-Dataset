@@ -7,6 +7,8 @@ import matplotlib.pyplot as plt
 from scipy.cluster.hierarchy import dendrogram
 from scipy.optimize import fsolve
 from sklearn.cluster import AgglomerativeClustering
+
+from src.dynamics.Quaternion import Quaternions
 from tools.mathtools import *
 from tools.two_step_mag_calibration import two_step
 import pandas as pd
@@ -30,20 +32,32 @@ class RealData:
 
     def __init__(self, folder, file_directory):
         # Real data
+        self.std_rn_w = np.deg2rad(0.2) # 1e-3  # gyro noise standard deviation [rad/s]
+        self.std_rw_w = 1e-4  # gyro random walk standard deviation [rad/s*s^0.5]
+        self.std_rn_mag = 2.8  # magnetometer noise standard deviation [mG]
+        self.I_nr_std_cos = np.deg2rad(1.8) # max cosine error [deg]
+        self.I_max = 930 # Max expected value [mA]
+        self.bias_true = None
+        self.time_format = '%Y-%m-%d %H:%M:%S'
+        self.step = 1
         self.folder_path = folder
         self.file_name = file_directory
-        self.data = pd.read_excel(folder + file_directory)
-        self.data.sort_values(by=['timestamp'], inplace=True)
-        self.data.dropna(inplace=True)
-        self.data.reset_index(inplace=True)
-        self.data['jd'] = [timestamp_to_julian(float(ts)) for ts in self.data['timestamp'].values]
-        self.data['mjd'] = self.data['jd'] - _MJD_1858
-        self.data[['acc_x', 'acc_y', 'acc_z']] *= np.deg2rad(1)
-        self.data['||mag||'] = np.linalg.norm(self.data[['mag_x', 'mag_y', 'mag_z']], axis=1)
+        if os.path.exists(self.folder_path + self.file_name):
+            self.data = pd.read_excel(folder + file_directory)
+            self.data['jd'] = [timestamp_to_julian(float(ts)) for ts in self.data['timestamp'].values]
+            self.data['mjd'] = self.data['jd'] - _MJD_1858
+            self.data[['acc_x', 'acc_y', 'acc_z']] *= np.deg2rad(1)
+            self.data['||mag||'] = np.linalg.norm(self.data[['mag_x', 'mag_y', 'mag_z']], axis=1)
+            self.data.sort_values(by=['timestamp'], inplace=True)
+            self.set_geometric_mag_bias()
+            self.data.dropna(inplace=True)
+            self.data.reset_index(inplace=True)
+        else:
+            self.data = pd.DataFrame()#columns=['timestamp', 'acc_x', 'acc_y', 'acc_z', 'mag_x', 'mag_y', 'mag_z',
+            #       'sun3', 'sun2', 'sun4', 'jd', 'mjd', '||mag||'])
         self.start_time = 0.
         self.end_time = 0.
         self.sc_inertia = np.array([38478.678, 38528.678, 6873.717, 0, 0, 0]) * 1e-6
-        self.set_geometric_mag_bias()
         self.data_video = {}
 
     def set_geometric_mag_bias(self):
@@ -108,10 +122,18 @@ class RealData:
 
     def set_inertia(self, inertia_):
         self.sc_inertia = np.diag(inertia_[:3])
+        self.sc_inertia[0][1] = inertia_[3]
+        self.sc_inertia[1][0] = inertia_[3]
+        self.sc_inertia[0][2] = inertia_[4]
+        self.sc_inertia[2][0] = inertia_[4]
+        self.sc_inertia[1][2] = inertia_[5]
+        self.sc_inertia[2][1] = inertia_[5]
 
-    def create_datetime_from_timestamp(self, time_format):
-        self.data['DateTime'] = [datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc).strftime(time_format)
-                                 for ts in self.data['timestamp']]
+    def create_datetime_from_timestamp(self, time_format=None):
+        if "timestamp" in self.data.columns:
+            self.time_format = time_format if time_format is not None else "%Y-%m-%d %H:%M:%S"
+            self.data['DateTime'] = [datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc).strftime(self.time_format)
+                                     for ts in self.data['timestamp']]
 
     def set_gyro_bias(self, gx, gy, gz, unit='deg'):
         if unit == 'deg':
@@ -121,19 +143,39 @@ class RealData:
 
         self.data[['acc_x', 'acc_y', 'acc_z']] += np.array([gx, gy, gz])
 
-    def plot_main_data(self):
+    def plot_main_data(self, sim_flag=False):
         self.plot_key(['mag_x', 'mag_y', 'mag_z', '||mag||'], color=['blue', 'orange', 'green', 'black'],
                       name="mag_sensor_mg", title="Raw Mag Sensor [mG]",
                       label=['x [mG]', 'y [mG]', 'z [mG]', '||mag||'], drawstyle=['steps-post'] * 4, marker=['.'] * 4)
         self.plot_key(['acc_x', 'acc_y', 'acc_z'], color=['blue', 'orange', 'green'],
-                      name="gyro_sensor_dps", title="Raw Gyro Sensor [rad/s]",
-                      label=['x [mG]', 'y [mG]', 'z [mG]', '||mag||'], drawstyle=['steps-post'] * 4, marker=['.'] * 4)
+                      name="gyro_sensor_rps", title="Raw Gyro Sensor [rad/s]",
+                      label=['x [rps]', 'y [rps]', 'z [rps]'], drawstyle=['steps-post'] * 4, marker=['.'] * 4)
         self.plot_key(['sun3'], color=['blue'], label=['-x [mA]'], name='css3', title="Intensity -x [mA]",
                       drawstyle=['steps-post'], marker=['.'] * 3)
         self.plot_key(['sun2'], color=['orange'], label=['-y [mA]'], name='css2', title="Intensity -y [mA]",
                       drawstyle=['steps-post'], marker=['.'])
         self.plot_key(['sun4'], color=['green'], label=['-z [mA]'], name='css4', title="Intensity -z [mA]",
                       drawstyle=['steps-post'], marker=['.'])
+        if sim_flag:
+            self.plot_key(['mag_x_t', 'mag_y_t', 'mag_z_t', '||mag_t||'], color=['blue', 'orange', 'green', 'black'],
+                          name="true_mag_mg_sim", title="True Mag Sensor [mG]",
+                          label=['x [mG]', 'y [mG]', 'z [mG]', '||mag||'], marker=['.'] * 4)
+            self.plot_key(['w_x', 'w_y', 'w_z'], color=['blue', 'orange', 'green'],
+                          name="true_omega_rps_sim", title="True Angular velocity [rad/s]",
+                          label=['x [rps]', 'y [rps]', 'z [rps]'], marker=['.'] * 4)
+            self.plot_key(['q_i2b_x', 'q_i2b_y', 'q_i2b_z', 'q_i2b_r'], color=['blue', 'orange', 'green', 'black'],
+                          name="quaternion_i2b_sim", title="Quaternion i2b [-]",
+                          label=['qx', 'qy', 'qz', 'qs'], marker=['.'] * 4)
+            self.plot_key(['sun3', 'sun3_t'], color=['blue', 'red'], label=['-x [mA]', '-x True [mA]'], name='css3_sim',
+                          title="True Intensity -x [mA]", marker=['.'] * 4)
+            self.plot_key(['sun2', 'sun2_t'], color=['orange', 'red'], label=['-y [mA]', '-y True [mA]'], name='css2_sim',
+                          title="True Intensity -y [mA]", marker=['.'] * 4)
+            self.plot_key(['sun4', 'sun4_t'], color=['green', 'red'], label=['-z [mA]', '-z True [mA]'], name='css4_sim',
+                          title="True Intensity -z [mA]", marker=['.'] * 4)
+            self.plot_key(['is_dark'], color=['black'], label=['dark flag'], name='is_dark_sim',
+                          title="Dark zone", marker=['.'] * 1)
+
+        plt.show()
 
 
     def plot_mag_error(self, channels, sub_name):
@@ -160,6 +202,7 @@ class RealData:
     def plot_key(self, to_plot: list, name='', title: str = None, show: bool = False, **kwargs):
         for key, value in kwargs.items():
             print("%s == %s" % (key, value))
+        SAMPLE = 500
         fig = plt.figure()
         plt.grid()
         plt.title(title) if title is not None else None
@@ -167,7 +210,7 @@ class RealData:
             dict_temp = {}
             for key, value in kwargs.items():
                 dict_temp[key] = value[i]
-            plt.plot(self.data['mjd'], self.data[elem], **dict_temp, alpha=0.3)
+            plt.plot(self.data['mjd'][:SAMPLE], self.data[elem][:SAMPLE], **dict_temp, alpha=0.3)
         plt.xlabel('Modified Julian Date')
         plt.legend()
         plt.xticks(rotation=15)
@@ -176,10 +219,18 @@ class RealData:
         fig.savefig(self.folder_path + "results/" + name + ".jpg")
         plt.show() if show else plt.close(fig)
 
-    def search_nearly_tle(self):
+    def search_nearly_tle(self, sat_name: str):
         jd_init = self.data['jd'].values[0]
         jd_end = self.data['jd'].values[-1]
-        tle_file = open("data/sat000052191.txt")
+        if sat_name.lower() == "suchai-3":
+            tle_file = open("data/sat000052191.txt")
+        elif sat_name.lower() == "plantsat":
+            tle_file = open("data/sat000052188.txt")
+        elif sat_name.lower() == "suchai-2":
+            tle_file = open("data/sat000052192.txt")
+        else:
+            print(" ERROR selecting Satellite name")
+            exit()
         tle_info = tle_file.readlines()
         tle_1 = [tle_info_ for tle_info_ in tle_info if tle_info_[0] == '1']
         tle_2 = [tle_info_ for tle_info_ in tle_info if tle_info_[0] == '2']
@@ -196,10 +247,10 @@ class RealData:
 
     def calibrate_gyro(self):
         print("Calibrating Gyroscope ...")
-        sigma_omega2 = 0.3 * np.deg2rad(1)
+        sigma_omega2 = self.std_rn_w ** 2 # 0.3 * np.deg2rad(1)
         R = np.eye(3) * sigma_omega2
         P = np.eye(6) * 1.0
-        Q = np.eye(6) * 1e-7
+        Q = np.eye(6) * 1e-4
         ekf_omega = EKFOmega(self.sc_inertia, R, Q, P)
         ekf_omega.set_first_state(np.concatenate((self.data[['acc_x', 'acc_y', 'acc_z']].values[0], np.zeros(3))))
         ekf_omega_hist = {'new_omega': [self.data[['acc_x', 'acc_y', 'acc_z']].values[0]],
@@ -267,7 +318,19 @@ class RealData:
                                                                    (np.eye(3) + scale)) - bias
         self.data['||mag||'] = np.linalg.norm(self.data[['mag_x', 'mag_y', 'mag_z']], axis=1)
 
-    def set_window_time(self, start_str=None, stop_str=None, format_time=None):
+    def set_window_time(self, start_str=None, stop_str=None, format_time=None, dt=1, sim_flag=False):
+        if sim_flag:
+            init = datetime.datetime.strptime(start_str, format_time)
+            stop = datetime.datetime.strptime(stop_str, format_time)
+            init = init.replace(tzinfo=datetime.timezone.utc).timestamp()
+            stop = stop.replace(tzinfo=datetime.timezone.utc).timestamp()
+            self.start_time = timestamp_to_julian(init)
+            self.end_time = timestamp_to_julian(stop)
+            self.data['timestamp'] = np.arange(init, stop + dt, dt)
+            self.data['jd'] = [timestamp_to_julian(float(ts)) for ts in self.data['timestamp'].values]
+            self.data['mjd'] = self.data['jd'] - _MJD_1858
+            self.step = dt
+
         if start_str is None and stop_str is None and format_time is None:
             self.plot_dendrogram_time()
             n_c = int(input("Set the number of cluster to find window time: "))
@@ -286,6 +349,7 @@ class RealData:
             self.data = self.data.iloc[list(temp.T)[0]]
             self.start_time = self.data['jd'].values[0]
             self.end_time = timestamp_to_julian(stop)
+        self.create_datetime_from_timestamp()
 
     def estimate_inertia_matrix(self, guess=None):
         if guess is None:
@@ -354,7 +418,6 @@ class RealData:
         plt.legend()
         plt.grid()
         fig.savefig(VIDEO_FOLDER + "results/" + "dot_pitch_roll_lvlh.png")
-        plt.show()
         plt.close("all")
 
     def plot_windows(self, VIDEO_FOLDER):
@@ -378,6 +441,103 @@ class RealData:
         plt.legend()
         fig.savefig(VIDEO_FOLDER + "results/" + "wind_data.png")
 
+    def create_sim_data(self, channels):
+        q_i2b = [Quaternions(q_) for q_ in channels['q_i2b']]
+        w_b = channels['w_b']
+        sun_sc_i = channels['sun_sc_i']
+        mag_i = channels['mag_i']
+        # MAG MODEL
+        mag_b_true = np.array([q_.frame_conv(m_) for q_, m_ in zip(q_i2b, mag_i)])
+        b_true_ = np.array([112, -275, -290])
+        d_true = np.array([[1.5, 0.00, 0.0], [0.00, 1.1, 0.0], [0.0, 0.0, 2.5]]) * 0.01
+        eta_noise = np.random.normal(0, self.std_rn_mag, size=(len(mag_b_true), 3))
+        mag_sensor_ = [np.linalg.inv(np.eye(3) + d_true) @ (mag_true_ + eta_ + b_true_)
+                       for eta_, mag_true_ in zip(eta_noise, mag_b_true)]
+        mag_sensor_ = np.array(mag_sensor_)
+        data_ = {}
+        data_['mag_x'] = mag_sensor_[:, 0]
+        data_['mag_y'] = mag_sensor_[:, 1]
+        data_['mag_z'] = mag_sensor_[:, 2]
+        data_['||mag||'] = np.linalg.norm(mag_sensor_, axis=1)
+        data_['mag_x_t'] = mag_b_true[:, 0]
+        data_['mag_y_t'] = mag_b_true[:, 1]
+        data_['mag_z_t'] = mag_b_true[:, 2]
+        data_['||mag_t||'] = np.linalg.norm(mag_b_true, axis=1)
+
+        # SUN MODEL
+        sun_sc_b = np.array([q_.frame_conv(m_) for q_, m_ in zip(q_i2b, sun_sc_i)])
+        unit_sun_sc_b = sun_sc_b / np.linalg.norm(sun_sc_b, axis=1).reshape(-1, 1)
+        minus_x = np.array([-1, 0, 0])
+        minus_y = np.array([0, -1, 0])
+        minus_z = np.array([0, 0, -1])
+
+        cos_theta_x = np.array([minus_x @ unit_sun_sc_b_ for unit_sun_sc_b_ in unit_sun_sc_b])
+        cos_theta_y = np.array([minus_y @ unit_sun_sc_b_ for unit_sun_sc_b_ in unit_sun_sc_b])
+        cos_theta_z = np.array([minus_z @ unit_sun_sc_b_ for unit_sun_sc_b_ in unit_sun_sc_b])
+
+        cos_theta_x_ns = np.cos(np.arccos(cos_theta_x) + np.random.normal(0, self.I_nr_std_cos, len(cos_theta_z)))
+        cos_theta_y_ns = np.cos(np.arccos(cos_theta_y) + np.random.normal(0, self.I_nr_std_cos, len(cos_theta_z)))
+        cos_theta_z_ns = np.cos(np.arccos(cos_theta_z) + np.random.normal(0, self.I_nr_std_cos, len(cos_theta_z)))
+
+        cos_theta_x[np.array(channels['is_dark'], dtype=bool)] = 0
+        cos_theta_y[np.array(channels['is_dark'], dtype=bool)] = 0
+        cos_theta_z[np.array(channels['is_dark'], dtype=bool)] = 0
+        cos_theta_x_ns[np.array(channels['is_dark'], dtype=bool)] = 0
+        cos_theta_y_ns[np.array(channels['is_dark'], dtype=bool)] = 0
+        cos_theta_z_ns[np.array(channels['is_dark'], dtype=bool)] = 0
+
+        # cos_theta_x[cos_theta_x < 0] = 0
+        # cos_theta_y[cos_theta_y < 0] = 0
+        # cos_theta_z[cos_theta_z < 0] = 0
+        cos_theta_x_ns[cos_theta_x_ns < 0] = 0
+        cos_theta_y_ns[cos_theta_y_ns < 0] = 0
+        cos_theta_z_ns[cos_theta_z_ns < 0] = 0
+
+        i_minus_x = 930 * cos_theta_x_ns
+        i_minus_y = 930 * cos_theta_y_ns
+        i_minus_z = 930 * cos_theta_z_ns
+        data_['sun3'] = np.abs(i_minus_x)
+        data_['sun2'] = np.abs(i_minus_y)
+        data_['sun4'] = np.abs(i_minus_z)
+        data_['sun3_t'] = 930 * cos_theta_x
+        data_['sun2_t'] = 930 * cos_theta_y
+        data_['sun4_t'] = 930 * cos_theta_z
+        # GYRO MODEL
+        dt = self.step
+        b_true_gyro = np.deg2rad(np.array([-3.5, 0.2, -0.7]))
+        d_true_gyro = np.array([[1.5, 0.00, 0.0], [0.00, 1.1, 0.0], [0.0, 0.0, 2.5]]) * 0.001
+        gyro_matrix_noise = 0.5 * (self.std_rn_w ** 2 / dt + self.std_rw_w ** 2 * dt / 12) ** 0.5
+        bias_true = [b_true_gyro]
+        omega_measure = [w_b[0] + b_true_gyro + gyro_matrix_noise * np.random.normal(0, np.array( [1,  1, 1]))]
+        for i in range(1, len(w_b)):
+            current_bias_true = bias_true[-1] + self.std_rw_w * dt ** 0.5 * np.random.normal(0, np.array([1, 1, 1]))
+            diff_bias = 0.5 * (current_bias_true + bias_true[-1])
+            current_omega = w_b[i] + diff_bias + gyro_matrix_noise * np.random.normal(0, np.array( [1,  1, 1]))
+            bias_true.append(current_bias_true)
+            omega_measure.append(current_omega)
+        omega_measure = np.array(omega_measure)
+        bias_true = np.array(bias_true)
+        data_['acc_x'] = omega_measure[:, 0]
+        data_['acc_y'] = omega_measure[:, 1]
+        data_['acc_z'] = omega_measure[:, 2]
+        data_['bias_x'] = bias_true[:, 0]
+        data_['bias_y'] = bias_true[:, 1]
+        data_['bias_z'] = bias_true[:, 2]
+        data_['q_i2b_x'] = channels['q_i2b'][:, 0]
+        data_['q_i2b_y'] = channels['q_i2b'][:, 1]
+        data_['q_i2b_z'] = channels['q_i2b'][:, 2]
+        data_['q_i2b_r'] = channels['q_i2b'][:, 3]
+        data_['w_x'] = w_b[:, 0]
+        data_['w_y'] = w_b[:, 1]
+        data_['w_z'] = w_b[:, 2]
+        data_['is_dark'] = channels['is_dark']
+        data_['timestamp'] = self.data['timestamp']
+        data_['jd'] = self.data['jd']
+        data_['mjd'] = self.data['mjd']
+
+        self.data = pd.DataFrame(data_)
+        self.data.reset_index()
+        self.data.to_excel(self.folder_path + self.file_name)
 
 def module_exception_log(method, *args, **kwargs):
     """ Catch and log exceptions to do not crash the GUI"""

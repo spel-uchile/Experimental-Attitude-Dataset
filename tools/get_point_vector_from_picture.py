@@ -366,7 +366,7 @@ def calc_hyperbola(points, fl, pw, ph, h, shape_, center_is_into_):
     alpha = np.arcsin((re + da) / (re + h))
     y = np.cos(alpha) * np.array([np.linalg.norm(p_c_i) for p_c_i in p_c])
     e_c = np.linalg.inv(hh.T @ hh) @ hh.T @ y
-    # e_c /= np.linalg.norm(e_c)
+    e_c = e_c / np.linalg.norm(e_c)
 
     vec_pix = (e_c * fl / e_c[2])[:2]
     center_pixel = np.zeros(2, dtype=np.int16)
@@ -392,14 +392,14 @@ def calc_hyperbola(points, fl, pw, ph, h, shape_, center_is_into_):
 
     # vector in body frame,
     e_b = ROT_CAM2BODY @ e_c
-    # pitch = np.arcsin(e_b[1])
+    pitch = np.arcsin(e_b[1])
     roll = -np.arctan2(e_b[0], e_b[2])
 
     roll_xy = roll# np.arctan2(x_inter, y_inter)
     pos_x_rot = -np.sin(roll_xy) * y_inter + np.cos(roll_xy) * x_inter
     pos_y_rot = np.sin(roll_xy) * x_inter + np.cos(roll_xy) * y_inter
 
-    pitch = angle_orbit - ang_center * np.sign(pos_y_rot)
+    # pitch = angle_orbit - ang_center * np.sign(pos_y_rot)
 
     # 3, 1, 2
     # q_Xx_1 = np.cos(pitch) * np.sin(roll)
@@ -487,7 +487,7 @@ def get_vector(file_name, height, height_img=None, width_img=None):
         dimx, dimy = col.size[0], col.size[1]
         pixel_size_width = sensor_width_h / dimx
         pixel_size_height = sensor_width_v / dimy
-        earth_limit_pixels = ((dimx * 0.82) ** 2 + (dimy * 0.81) ** 2) ** 0.5
+        earth_limit_pixels = ((dimx * 0.3) ** 2 + (dimy * 0.3) ** 2) ** 0.5
         t1 = time.time()
         bw_bodies = get_body(col.copy(), file_name, show=False)
         radius_, point_list_ = get_type_radius(bw_bodies)
@@ -541,10 +541,10 @@ def get_vector(file_name, height, height_img=None, width_img=None):
                     draw.ellipse([(x0 - pix_elipse_w, y0 - pix_elipse_h),
                                   (x0 + pix_elipse_w, y0 + pix_elipse_h)] , fill=None, outline="white")
 
-                    draw.text((0, 80), f"{np.round(angle_ * np.rad2deg(1), 1)} deg - {len(pl[0])}", fill="blue", scale=0.5)
-                    draw.text((0, 0), f"R1: {np.round(pitch_ * np.rad2deg(1), 2)} deg", fill="white", scale=0.5)
-                    draw.text((0, 10), f"R2: {np.round(roll_ * np.rad2deg(1), 2)} deg", fill="white", scale=0.5)
-                    draw.text((0, 70), f"{int(radii[0])} - {int(radii[1])}", fill="red", scale=0.5)
+                    draw.text((0, 80), f"{np.round(angle_ * np.rad2deg(1), 1)} deg", fill="white", scale=0.5)
+                    draw.text((0, 0), f"R1: {np.round(pitch_ * np.rad2deg(1), 2)} deg", fill="yellow", scale=0.5)
+                    draw.text((0, 10), f"R2: {np.round(roll_ * np.rad2deg(1), 2)} deg", fill="yellow", scale=0.5)
+                    # draw.text((0, 70), f"{int(radii[0])} - {int(radii[1])}", fill="red", scale=0.5)
 
                     edge_, img_cv2_ = None, np.asarray(im)
                     # add arrow

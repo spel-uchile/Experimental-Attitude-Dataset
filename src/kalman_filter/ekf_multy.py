@@ -51,13 +51,12 @@ class MEKF(EKF):
         f_x = np.zeros((6, 6))
         f_x[:3, :3] = -skew(omega)
         f_x[:3, 3:] = -np.identity(3)
-
         self.kf_Q[:3, :3] = np.identity(3) * (self.sigma_omega ** 2 * step + 1 / 3 * self.sigma_bias ** 2 * step ** 3)
         self.kf_Q[3:, 3:] = np.identity(3) * self.sigma_bias ** 2 * step
-        self.kf_Q[:3, 3:] = - np.identity(3) * 0.5 * self.sigma_bias ** 2 * step ** 2
-        self.kf_Q[3:, :3] = - np.identity(3) * 0.5 * self.sigma_omega ** 2 * step ** 2
+        # self.kf_Q[:3, 3:] = - np.identity(3) * 0.5 * self.sigma_bias ** 2 * step ** 2
+        # self.kf_Q[3:, :3] = - np.identity(3) * 0.5 * self.sigma_bias ** 2 * step ** 2
 
-        phi = (np.eye(6) + f_x + 0.5 * f_x @ f_x * step) * step
+        phi = (np.eye(6) + f_x) * step # + 0.5 * f_x @ f_x * step) * step
         new_p_k = phi.dot(self.covariance_P).dot(phi.T) + self.kf_Q
         return new_p_k
 
@@ -130,19 +129,20 @@ class MEKF(EKF):
 
     def update_state(self, new_x_k, z_k_medido, z_from_observer, H_):
         error = z_k_medido - z_from_observer
-        correction = self.kf_K @ error + self.kf_K @ H_ @ new_x_k
+        correction = self.kf_K @ error#  + self.kf_K @ H_ @ new_x_k
         if np.any(np.isnan(correction)):
             print("correction: {}".format(correction))
         new_x = new_x_k + correction
         return new_x
 
     def reset_state(self):
-        dot_error = self.internal_state[:3] @ self.internal_state[:3]
+        dot_error = (self.internal_state[:3] @ self.internal_state[:3]) * 0.5
+        temp = 1 #/ np.sqrt(1 + dot_error)
         # if dot_error < 1:
         #     error_q = Quaternions(np.array([*self.internal_state[:3] * 0.5,
         #                                     np.sqrt(1 - dot_error)]))
         # else:
-        error_q = Quaternions(np.array([*self.internal_state[:3] * 0.5, 1]) / np.sqrt(1 + dot_error))
+        error_q = Quaternions(np.array([*self.internal_state[:3] * 0.5, 1]) * temp)
         error_q.normalize()
         # diff = error_q * Quaternions(self.current_quaternion)
         current_quaternion = Quaternions(self.current_quaternion) * error_q

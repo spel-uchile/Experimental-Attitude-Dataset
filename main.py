@@ -8,11 +8,13 @@ import numpy as np
 import pickle
 import datetime
 import sys
-from rich import print
+# from rich import print
 import os
 import pandas as pd
 
 import cv2
+from astropy.units.quantity_helper.function_helpers import block
+
 from src.kalman_filter.ekf_multy import MEKF
 # from src.kalman_filter.ekf_mag_calibration import MagEKF
 # from src.kalman_filter.ukf_propagation import UKF
@@ -34,7 +36,8 @@ mpl.rcParams['font.size'] = 12
 # CONFIG
 # PROJECT_FOLDER = "./data/20240804/"
 # PROJECT_FOLDER = "./data/M-20230824/"
-PROJECT_FOLDER = "./data/20230904/"
+# PROJECT_FOLDER = "./data/20230904/"
+PROJECT_FOLDER = "./data/SimulationExample/"
 PROJECT_FOLDER = os.path.abspath(PROJECT_FOLDER) + "/"
 module_name = "dataconfig"
 
@@ -42,7 +45,7 @@ module_name = "dataconfig"
 spec = importlib.util.spec_from_file_location(module_name, PROJECT_FOLDER + module_name + ".py")
 myconfig = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(myconfig)
-
+SATELLITE_NAME = myconfig.SATELLITE_NAME
 FORCE_CALCULATION = myconfig.FORCE_CALCULATION
 CREATE_FRAME = myconfig.CREATE_FRAME
 VIDEO_DATA = myconfig.VIDEO_DATA
@@ -55,6 +58,10 @@ WINDOW_TIME = myconfig.WINDOW_TIME
 ONLINE_MAG_CALIBRATION = myconfig.ONLINE_MAG_CALIBRATION
 EKF_SETUP = myconfig.EKF_SETUP
 IMAGEN_DATA = myconfig.IMAGEN_DATA
+if "SIMULATION" in list(myconfig.__dict__):
+    SIMULATION = myconfig.SIMULATION
+else:
+    SIMULATION = False
 
 if __name__ == '__main__':
     # LOAD LAST RESULT ------------------------------------------------------------------------------------------------
@@ -70,25 +77,16 @@ if __name__ == '__main__':
     sensors = RealData(PROJECT_FOLDER, OBC_DATA)
     # sensors.set_gyro_bias(-3.846, 0.1717, -0.6937, unit='deg')
     sensors.create_datetime_from_timestamp(TIME_FORMAT)
-    inertia = np.array([38478.678, 38528.678, 6873.717, 0, 0, 0]) * 1e-6
+    inertia = np.array([38540.678, 38550.678, 6873.717, 0, 0, 0]) * 1e-6
     # sensors.estimate_inertia_matrix(guess=inertia)
     sensors.set_inertia(inertia)
     # show window time
     if WINDOW_TIME['FLAG']:
-        sensors.set_window_time(WINDOW_TIME['Start'], WINDOW_TIME['Stop'], TIME_FORMAT)
+        sensors.set_window_time(WINDOW_TIME['Start'], WINDOW_TIME['Stop'], TIME_FORMAT, WINDOW_TIME['STEP'], SIMULATION)
     else:
         sensors.set_window_time()
 
-    # sensors.plot_main_data()
-    # calibrate gyro
-    # pcov_gyro = sensors.calibrate_gyro()
-    # print(pcov_gyro)
-    # sensors.plot_key(['acc_x', 'acc_y', 'acc_z'], color=['blue', 'orange', 'green'],
-    #                  name="cal_gyro_sensor_dps", title="Calibrate Gyro Sensor [rad/s]",
-    #                  label=['x [mG]', 'y [mG]', 'z [mG]', '||mag||'], drawstyle=['steps-post'] * 4, marker=['.'] * 4)
-
-
-    line1, line2 = sensors.search_nearly_tle()
+    line1, line2 = sensors.search_nearly_tle(SATELLITE_NAME)
     print(line1, line2)
     # TIME
     dt_obc = OBC_DATA_STEP
@@ -97,12 +95,12 @@ if __name__ == '__main__':
     stop_datetime = datetime.datetime.strptime(WINDOW_TIME['Stop'], TIME_FORMAT)
     print(start_datetime.timestamp(), stop_datetime.timestamp())
 
-    # SIMULATION ------------------------------------------------------------------------------------------------------
+    # MODEL ------------------------------------------------------------------------------------------------------
     # if not exist file channels
     Imax = 930
     pred_step_sec = 60
-    time_vector = sensors.data['jd'].values
-    dynamic_orbital = Dynamics(time_vector, line1, line2)
+    jd_time_vector = sensors.data['jd'].values
+    dynamic_orbital = Dynamics(jd_time_vector, line1, line2)
     if os.path.exists(PROJECT_FOLDER + "channels.p") and not FORCE_CALCULATION:
         with open(PROJECT_FOLDER + "channels.p", 'rb') as fp:
             channels = pickle.load(fp)
@@ -111,7 +109,7 @@ if __name__ == '__main__':
         channels = dynamic_orbital.channels
     else:
         # Inertial Parameters
-        channels = dynamic_orbital.get_dynamics()
+        channels = dynamic_orbital.get_dynamics(SIMULATION, sensors.sc_inertia)
         # save channels as json
         with open(PROJECT_FOLDER + 'channels.p', 'wb') as file_:
             pickle.dump(channels, file_)
@@ -120,14 +118,29 @@ if __name__ == '__main__':
         dynamic_orbital.plot_mag(PROJECT_FOLDER + 'results/mag_model_igrf13')
         dynamic_orbital.plot_sun_sc(PROJECT_FOLDER + 'results/sun_pos_from_sc')
 
+    if SIMULATION:
+        dynamic_orbital.set_inertia(sensors.sc_inertia)
+        if not os.path.exists(PROJECT_FOLDER + OBC_DATA):
+            dynamic_orbital.update_attitude(np.array([0, 1, 1, 0]) / np.sqrt(2), np.array([-0.001, -20 * np.deg2rad(1), 0.01]))
+            sensors.create_sim_data(channels)
+
+    sensors.plot_main_data(SIMULATION)
+    # calibrate gyro
+    # pcov_gyro = sensors.calibrate_gyro()
+    # print(pcov_gyro)
+    # sensors.plot_key(['acc_x', 'acc_y', 'acc_z'], color=['blue', 'orange', 'green'],
+    #                  name="cal_gyro_sensor_dps", title="Calibrate Gyro Sensor [rad/s]",
+    #                  label=['x [mG]', 'y [mG]', 'z [mG]', '||mag||'], drawstyle=['steps-post'] * 4, marker=['.'] * 4,
+    #                  show=True)
+
     # calibration using two-step and channels
-    # sensors.plot_mag_error(channels, 'before')
-    # sensors.calibrate_mag(mag_i=channels['mag_i'])
-    # sensors.plot_key(['mag_x', 'mag_y', 'mag_z', '||mag||'], color=['blue', 'orange', 'green', 'black'],
-    #                  name="mag_sensor_mg_two_step", title="TWO STEP Calibration - Mag [mG]",
-    #                  label=['x [mG]', 'y [mG]', 'z [mG]', '||mag||'], drawstyle=['steps-post'] * 4, marker=['.'] * 4)
-    # sensors.show_mag_geometry("TWO STEP Method")
-    # sensors.plot_mag_error(channels, 'after')
+    sensors.plot_mag_error(channels, 'before')
+    sensors.calibrate_mag(mag_i=channels['mag_i'])
+    sensors.plot_key(['mag_x', 'mag_y', 'mag_z', '||mag||'], color=['blue', 'orange', 'green', 'black'],
+                     name="mag_sensor_mg_two_step", title="TWO STEP Calibration - Mag [mG]",
+                     label=['x [mG]', 'y [mG]', 'z [mG]', '||mag||'], drawstyle=['steps-post'] * 4, marker=['.'] * 4)
+    sensors.show_mag_geometry("TWO STEP Method")
+    sensors.plot_mag_error(channels, 'after')
 
     # VIDEO -----------------------------------------------------------------------------------------------------------
     if CREATE_FRAME and VIDEO_DATA is not None:
@@ -211,7 +224,7 @@ if __name__ == '__main__':
     if ONLINE_MAG_CALIBRATION:
         D_est = np.zeros(6) + 1e-9
         b_est = np.zeros(3) + 10
-        ukf = MagUKF(b_est, D_est, alpha=0.1)
+        ukf = MagUKF(b_est, D_est, alpha=0.2)
         mag_ukf = ukf.calibrate(channels['mag_i'], sensors.data[['mag_x', 'mag_y', 'mag_z']].values)
         ukf.plot(np.linalg.norm(mag_ukf, axis=1), np.linalg.norm(channels['mag_i'], axis=1), sensors.data['mjd'],
                  PROJECT_FOLDER + 'results/')
@@ -223,21 +236,22 @@ if __name__ == '__main__':
 
     sensors.show_mag_geometry("UKF Method")
     omega_b = sensors.data[['acc_x', 'acc_y', 'acc_z']].values[0]
-    q_i2b = Quaternions.get_from_two_v(channels['mag_i'][0], sensors.data[['mag_x', 'mag_y', 'mag_z']].values[0])()
-    mag_b = Quaternions(q_i2b).frame_conv(channels['mag_i'][0])
-    moon_b = Quaternions(q_i2b).frame_conv(channels['moon_sc_i'][0])
+    q_i2b_0 = Quaternions.get_from_two_v(channels['mag_i'][0], sensors.data[['mag_x', 'mag_y', 'mag_z']].values[0])()
+    mag_b = Quaternions(q_i2b_0).frame_conv(channels['mag_i'][0])
+    moon_b = Quaternions(q_i2b_0).frame_conv(channels['moon_sc_i'][0])
 
     prediction_dict = {'q_i2b_pred': [],
                        'omega_b_pred': [],
                        'time_pred': [],}
 
-    if not os.path.exists(PROJECT_FOLDER + "estimation_results.p"):
+    MAX_SAMPLES = 500  # len(channels['full_time'])
+    if not os.path.exists(PROJECT_FOLDER + "estimation_results.p") or True:
         if EKF_SETUP == 'NORMAL':
             # MEKF
-            P = np.diag([0.5, 0.5, 0.5, 0.01, 0.01, 0.01])  # * 10
+            P = np.diag([1.0, 1.0, 1.0, 0.1, 0.1, 0.1])
             ekf_model = MEKF(inertia, P=P, Q=np.zeros((6, 6)), R=np.zeros((3, 3)))
-            ekf_model.sigma_bias = 1e-3
-            ekf_model.sigma_omega = 1e-4
+            ekf_model.sigma_bias = 1e-2 # gyro noise standard deviation [rad/s]
+            ekf_model.sigma_omega = 1e-3 # gyro random walk standard deviation [rad/s*s^0.5]
             ekf_model.current_bias = np.array([0.0, 0.0, 0])
         elif EKF_SETUP == 'FULL':
             # MEKF
@@ -246,6 +260,7 @@ if __name__ == '__main__':
             ekf_model.sigma_bias = 0.0005
             ekf_model.sigma_omega = 1e-6
 
+        q_i2b = np.array([0, 0, 0, 1])
         ekf_model.set_quat(q_i2b, save=True)
         ekf_model.set_gyro_measure(omega_b)
         ekf_model.save_vector(name='mag_est', vector=sensors.data[['mag_x', 'mag_y', 'mag_z']].values[0])
@@ -263,15 +278,15 @@ if __name__ == '__main__':
         moon_sc_b = [moon_b]
         t0 = channels['full_time'][0]
         sensor_step = 1
-        for t_, omega_gyro_, mag_ref_, body_vec_, sun_sc_i_, css_3_ in zip(channels['full_time'][1:],
+        for t_, omega_gyro_, mag_ref_, body_vec_, sun_sc_i_, css_3_ in zip(channels['full_time'][1:MAX_SAMPLES],
                                                                            sensors.data[['acc_x', 'acc_y', 'acc_z']].values[
-                                                                           1:],
-                                                                           channels['mag_i'][1:],
+                                                                           1:MAX_SAMPLES],
+                                                                           channels['mag_i'][1:MAX_SAMPLES],
                                                                            sensors.data[['mag_x', 'mag_y', 'mag_z']].values[
-                                                                           1:],
-                                                                           channels['sun_sc_i'][1:],
+                                                                           1:MAX_SAMPLES],
+                                                                           channels['sun_sc_i'][1:MAX_SAMPLES],
                                                                            sensors.data[['sun3', 'sun2', 'sun4']].values[
-                                                                           1:]):
+                                                                           1:MAX_SAMPLES]):
             # Optimization of R and Q
             # ekf_model.optimize_R_Q(body_vec_, mag_ref_, dt)
 
@@ -292,15 +307,15 @@ if __name__ == '__main__':
             t0 = t_
             # ukf_model.predict()
             # mag
-            mag_est = ekf_model.inject_vector(body_vec_, mag_ref_, sigma2=2.8 ** 2, sensor='mag')
+            mag_est = ekf_model.inject_vector(body_vec_, mag_ref_, sigma2=sensors.std_rn_mag ** 2, sensor='mag')
 
             # mag_est_ukf = ukf_model.inject_vector(body_vec_, mag_ref_, sigma2=5000, sensor='mag')
             # css
             css_est = np.zeros(3)
             is_dark = shadow_zone(channels['sat_pos_i'][k], channels['sun_i'][k])
-            if not is_dark and False:
+            if not is_dark:
                 css_3_[css_3_ < 50] = 0.0
-                css_est = ekf_model.inject_vector(css_3_, sun_sc_i_, gain=-Imax * np.eye(3), sigma2=10, sensor='css')
+                css_est = ekf_model.inject_vector(css_3_, sun_sc_i_, gain=-Imax * np.eye(3), sigma2=20, sensor='css')
             ekf_model.save_vector(name='css_est', vector=css_est)
             ekf_model.save_vector(name='mag_est', vector=mag_est)
             ekf_model.save_vector(name='sun_b_est', vector=Quaternions(ekf_model.current_quaternion).frame_conv(sun_sc_i_))
@@ -318,13 +333,23 @@ if __name__ == '__main__':
 
     data_text = ["{}".format(julian_to_datetime(jd_)) for jd_ in channels['full_time']]
     channels['DateTime'] = data_text
+    channels_temp = channels.copy()
+    channels = {k: v[:MAX_SAMPLES] for k, v in channels_temp.items()}
     channels = {**channels, **ekf_channels}
-    error_mag = channels['mag_est'] - sensors.data[['mag_x', 'mag_y', 'mag_z']].values
-    error_pred = [(Quaternions(Quaternions(q_p).conjugate()) * Quaternions(q_kf)).get_angle()
+    error_mag = channels['mag_est'] - sensors.data[['mag_x', 'mag_y', 'mag_z']].values[:MAX_SAMPLES]
+    error_pred = [(Quaternions(Quaternions(q_p)()) * Quaternions(q_kf)).get_angle()
                   for q_p, q_kf in zip(channels['q_i2b_pred'], channels['q_est'][pred_step_sec:])]
 
     q_est = np.array(channels['q_est'])
-
+    if SIMULATION:
+        # error_est = [(Quaternions(q_kf) * Quaternions(Quaternions(q_p).conjugate())).get_angle() * np.rad2deg(1)
+        #               for q_kf, q_p in zip(sensors.data[['q_i2b_x', 'q_i2b_y', 'q_i2b_z', 'q_i2b_r']].values[:MAX_SAMPLES], channels['q_est'])]
+        error_est = sensors.data[['q_i2b_x', 'q_i2b_y', 'q_i2b_z', 'q_i2b_r']].values[:MAX_SAMPLES] - channels['q_est']
+        error_est = np.array(error_est)
+        # error_est[error_est > 180.0] = 360.0 - error_est[error_est > 180.0]
+        channels_true = {'error_q_true': error_est,
+                         'error_w_true': sensors.data[['w_x', 'w_y', 'w_z']].values[:MAX_SAMPLES] - np.array(channels['omega_est'])}
+        channels = {**channels, **channels_true}
     # q_train = q_est[:int(0.1 * len(q_est))]
     # theta_r = np.arccos(q_train[:, 3]) * 2
     # quat_vec = q_train[:, :3] / np.sin(theta_r * 0.5)
@@ -386,9 +411,12 @@ if __name__ == '__main__':
     # monitor.plot(x_dataset='full_time', y_dataset='mag_est')
     monitor.plot(x_dataset='full_time', y_dataset='sun_b_est')
     monitor.plot(x_dataset='full_time', y_dataset='p_cov')
+    if SIMULATION:
+        monitor.plot(x_dataset='full_time', y_dataset='error_q_true')
+        monitor.plot(x_dataset='full_time', y_dataset='error_w_true')
 
     fig, axes = plt.subplots(nrows=3, ncols=1, sharex=True)
-    plt.title("Magnetometer estimation [mG]")
+    axes[0].set_title("Magnetometer estimation [mG]")
     axes[0].plot(channels['full_time'], np.array(channels['mag_est'])[:, 0], color='blue', label='-x')
     axes[1].plot(channels['full_time'], np.array(channels['mag_est'])[:, 1], color='orange', label='-y')
     axes[2].plot(channels['full_time'], np.array(channels['mag_est'])[:, 2], color='green', label='-z')
@@ -401,7 +429,7 @@ if __name__ == '__main__':
     axes[2].set_xlabel("step")
 
     fig, axes = plt.subplots(nrows=3, ncols=1, sharex=True)
-    plt.title("Coarse sun sensor estimation [mA]")
+    axes[0].set_title("Coarse sun sensor estimation [mA]")
     axes[0].plot(channels['full_time'], np.array(channels['css_est'])[:, 0], color='blue', label='-x')
     axes[1].plot(channels['full_time'], np.array(channels['css_est'])[:, 1], color='orange', label='-y')
     axes[2].plot(channels['full_time'], np.array(channels['css_est'])[:, 2], color='green', label='-z')
