@@ -24,6 +24,7 @@ class EKFOmega(EKF):
         new_z_k = self.observation_matrix @ new_x_k
         self.update_covariance_matrix(self.observation_matrix, new_P_k)
         self.get_kalman_gain(self.observation_matrix, new_P_k)
+        print(f" --- Gyro error: {current_measure - new_z_k}")
         new_x = self.update_state(new_x_k, current_measure, new_z_k, 0 * self.observation_matrix)
         new_P = self.update_covariance_P_matrix(self.observation_matrix, new_P_k)
         self.state = new_x

@@ -124,6 +124,10 @@ if __name__ == '__main__':
             dynamic_orbital.update_attitude(np.array([0, 1, 1, 0]) / np.sqrt(2), np.array([-0.001, -20 * np.deg2rad(1), 0.01]))
             sensors.create_sim_data(channels)
 
+    dynamic_orbital.plot_gt(PROJECT_FOLDER + 'results/gt')
+    dynamic_orbital.plot_mag(PROJECT_FOLDER + 'results/mag_model_igrf13')
+    dynamic_orbital.plot_sun_sc(PROJECT_FOLDER + 'results/sun_pos_from_sc')
+
     sensors.plot_main_data(SIMULATION)
     # calibrate gyro
     # pcov_gyro = sensors.calibrate_gyro()
@@ -244,14 +248,14 @@ if __name__ == '__main__':
                        'omega_b_pred': [],
                        'time_pred': [],}
 
-    MAX_SAMPLES = 500  # len(channels['full_time'])
+    MAX_SAMPLES = 1000  # len(channels['full_time'])
     if not os.path.exists(PROJECT_FOLDER + "estimation_results.p") or True:
         if EKF_SETUP == 'NORMAL':
             # MEKF
-            P = np.diag([1.0, 1.0, 1.0, 0.1, 0.1, 0.1])
+            P = np.diag([1.0, 1.0, 1.0, 1.0, 1, 1]) * 1e-1
             ekf_model = MEKF(inertia, P=P, Q=np.zeros((6, 6)), R=np.zeros((3, 3)))
-            ekf_model.sigma_bias = 1e-2 # gyro noise standard deviation [rad/s]
-            ekf_model.sigma_omega = 1e-3 # gyro random walk standard deviation [rad/s*s^0.5]
+            ekf_model.sigma_bias = 1e-3 # gyro noise standard deviation [rad/s]
+            ekf_model.sigma_omega = 1e-4 # gyro random walk standard deviation [rad/s*s^0.5]
             ekf_model.current_bias = np.array([0.0, 0.0, 0])
         elif EKF_SETUP == 'FULL':
             # MEKF
@@ -295,7 +299,7 @@ if __name__ == '__main__':
 
             for _ in range(int(pred_step_sec / 0.1)):
                 q_i2b_pred = calc_quaternion(q_i2b_pred, omega_b_pred, 0.1)
-                omega_b_pred = calc_omega_b(omega_b_pred, 0.1)
+                omega_b_pred = calc_omega_b(omega_b_pred, 0.1, inertia_=sensors.sc_inertia)
             t_pred = t_ + pred_step_sec
 
             # # integration
@@ -315,7 +319,7 @@ if __name__ == '__main__':
             is_dark = shadow_zone(channels['sat_pos_i'][k], channels['sun_i'][k])
             if not is_dark:
                 css_3_[css_3_ < 50] = 0.0
-                css_est = ekf_model.inject_vector(css_3_, sun_sc_i_, gain=-Imax * np.eye(3), sigma2=20, sensor='css')
+                css_est = ekf_model.inject_vector(css_3_, sun_sc_i_, gain=-Imax * np.eye(3), sigma2=50, sensor='css')
             ekf_model.save_vector(name='css_est', vector=css_est)
             ekf_model.save_vector(name='mag_est', vector=mag_est)
             ekf_model.save_vector(name='sun_b_est', vector=Quaternions(ekf_model.current_quaternion).frame_conv(sun_sc_i_))
@@ -337,14 +341,14 @@ if __name__ == '__main__':
     channels = {k: v[:MAX_SAMPLES] for k, v in channels_temp.items()}
     channels = {**channels, **ekf_channels}
     error_mag = channels['mag_est'] - sensors.data[['mag_x', 'mag_y', 'mag_z']].values[:MAX_SAMPLES]
-    error_pred = [(Quaternions(Quaternions(q_p)()) * Quaternions(q_kf)).get_angle()
+    error_pred = [(Quaternions(Quaternions(q_p).conjugate()) * Quaternions(q_kf)).get_angle(error_flag=True)
                   for q_p, q_kf in zip(channels['q_i2b_pred'], channels['q_est'][pred_step_sec:])]
 
     q_est = np.array(channels['q_est'])
     if SIMULATION:
-        # error_est = [(Quaternions(q_kf) * Quaternions(Quaternions(q_p).conjugate())).get_angle() * np.rad2deg(1)
-        #               for q_kf, q_p in zip(sensors.data[['q_i2b_x', 'q_i2b_y', 'q_i2b_z', 'q_i2b_r']].values[:MAX_SAMPLES], channels['q_est'])]
-        error_est = sensors.data[['q_i2b_x', 'q_i2b_y', 'q_i2b_z', 'q_i2b_r']].values[:MAX_SAMPLES] - channels['q_est']
+        error_est = [(Quaternions(Quaternions(q_p).conjugate()) * Quaternions(q_kf)).get_angle(error_flag=True) * np.rad2deg(1)
+                      for q_kf, q_p in zip(sensors.data[['q_i2b_x', 'q_i2b_y', 'q_i2b_z', 'q_i2b_r']].values[:MAX_SAMPLES], channels['q_est'])]
+        # error_est = sensors.data[['q_i2b_x', 'q_i2b_y', 'q_i2b_z', 'q_i2b_r']].values[:MAX_SAMPLES] - channels['q_est']
         error_est = np.array(error_est)
         # error_est[error_est > 180.0] = 360.0 - error_est[error_est > 180.0]
         channels_true = {'error_q_true': error_est,

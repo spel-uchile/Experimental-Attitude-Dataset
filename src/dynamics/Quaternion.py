@@ -121,8 +121,8 @@ class Quaternions(object):
             raise Exception('[Quaternion] Unknown method for frame convertion')
         return ans
 
-    def get_angle(self):
-        return np.arccos(self.q[3]) * 2.0
+    def get_angle(self, error_flag=False):
+        return np.arccos(self.q[3] if not error_flag else np.abs(self.q[3])) * 2.0
 
     def todcm(self):
         q1 = self.q[0]

@@ -163,6 +163,9 @@ class RealData:
             self.plot_key(['w_x', 'w_y', 'w_z'], color=['blue', 'orange', 'green'],
                           name="true_omega_rps_sim", title="True Angular velocity [rad/s]",
                           label=['x [rps]', 'y [rps]', 'z [rps]'], marker=['.'] * 4)
+            self.plot_key(['bias_x', 'bias_y', 'bias_z'], color=['blue', 'orange', 'green'],
+                          name="true_bias_rps_sim", title="True bias - Angular velocity [rad/s]",
+                          label=['x [rps]', 'y [rps]', 'z [rps]'], marker=['.'] * 4)
             self.plot_key(['q_i2b_x', 'q_i2b_y', 'q_i2b_z', 'q_i2b_r'], color=['blue', 'orange', 'green', 'black'],
                           name="quaternion_i2b_sim", title="Quaternion i2b [-]",
                           label=['qx', 'qy', 'qz', 'qs'], marker=['.'] * 4)
@@ -202,7 +205,7 @@ class RealData:
     def plot_key(self, to_plot: list, name='', title: str = None, show: bool = False, **kwargs):
         for key, value in kwargs.items():
             print("%s == %s" % (key, value))
-        SAMPLE = 500
+        SAMPLE = 1000
         fig = plt.figure()
         plt.grid()
         plt.title(title) if title is not None else None
@@ -250,7 +253,7 @@ class RealData:
         sigma_omega2 = self.std_rn_w ** 2 # 0.3 * np.deg2rad(1)
         R = np.eye(3) * sigma_omega2
         P = np.eye(6) * 1.0
-        Q = np.eye(6) * 1e-4
+        Q = np.eye(6) * self.std_rw_w
         ekf_omega = EKFOmega(self.sc_inertia, R, Q, P)
         ekf_omega.set_first_state(np.concatenate((self.data[['acc_x', 'acc_y', 'acc_z']].values[0], np.zeros(3))))
         ekf_omega_hist = {'new_omega': [self.data[['acc_x', 'acc_y', 'acc_z']].values[0]],
@@ -504,7 +507,7 @@ class RealData:
         data_['sun4_t'] = 930 * cos_theta_z
         # GYRO MODEL
         dt = self.step
-        b_true_gyro = np.deg2rad(np.array([-3.5, 0.2, -0.7]))
+        b_true_gyro = -np.array([0.07, 0.01, -0.04])
         d_true_gyro = np.array([[1.5, 0.00, 0.0], [0.00, 1.1, 0.0], [0.0, 0.0, 2.5]]) * 0.001
         gyro_matrix_noise = 0.5 * (self.std_rn_w ** 2 / dt + self.std_rw_w ** 2 * dt / 12) ** 0.5
         bias_true = [b_true_gyro]
@@ -517,9 +520,9 @@ class RealData:
             omega_measure.append(current_omega)
         omega_measure = np.array(omega_measure)
         bias_true = np.array(bias_true)
-        data_['acc_x'] = omega_measure[:, 0]
-        data_['acc_y'] = omega_measure[:, 1]
-        data_['acc_z'] = omega_measure[:, 2]
+        data_['acc_x'] = omega_measure[:, 0] * np.rad2deg(1)
+        data_['acc_y'] = omega_measure[:, 1] * np.rad2deg(1)
+        data_['acc_z'] = omega_measure[:, 2] * np.rad2deg(1)
         data_['bias_x'] = bias_true[:, 0]
         data_['bias_y'] = bias_true[:, 1]
         data_['bias_z'] = bias_true[:, 2]
@@ -538,6 +541,9 @@ class RealData:
         self.data = pd.DataFrame(data_)
         self.data.reset_index()
         self.data.to_excel(self.folder_path + self.file_name)
+        self.data['acc_x'] *= np.deg2rad(1)
+        self.data['acc_y'] *= np.deg2rad(1)
+        self.data['acc_z'] *= np.deg2rad(1)
 
 def module_exception_log(method, *args, **kwargs):
     """ Catch and log exceptions to do not crash the GUI"""

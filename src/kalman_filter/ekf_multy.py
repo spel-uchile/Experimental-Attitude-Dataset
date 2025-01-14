@@ -31,7 +31,7 @@ class MEKF(EKF):
 
     def set_gyro_measure(self, value):
         self.omega_state = value
-        print(self.omega_state - self.current_bias)
+        print("Current bias", self.current_bias, "Gyro", self.omega_state, "Omega est", self.omega_state - self.current_bias)
         self.historical['omega_est'].append(self.omega_state - self.current_bias)
 
     def set_quat(self, value, save=False):
