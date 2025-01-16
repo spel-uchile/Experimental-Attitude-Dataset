@@ -4,6 +4,7 @@ Date: 17-10-2023
 email: els.obrq@gmail.com
 """
 
+SATELLITE_NAME = "SUCHAI-3"
 FORCE_CALCULATION = False
 OBC_DATA = "gyros-S3-040923.xlsx"
 OBC_DATA_STEP = 1.0

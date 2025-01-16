@@ -42,8 +42,10 @@ class RealData:
         self.step = 1
         self.folder_path = folder
         self.file_name = file_directory
+        self.MAX_SAMPLES = None
         if os.path.exists(self.folder_path + self.file_name):
             self.data = pd.read_excel(folder + file_directory)
+            self.data.dropna(inplace=True)
             self.data['jd'] = [timestamp_to_julian(float(ts)) for ts in self.data['timestamp'].values]
             self.data['mjd'] = self.data['jd'] - _MJD_1858
             self.data[['acc_x', 'acc_y', 'acc_z']] *= np.deg2rad(1)
@@ -205,7 +207,7 @@ class RealData:
     def plot_key(self, to_plot: list, name='', title: str = None, show: bool = False, **kwargs):
         for key, value in kwargs.items():
             print("%s == %s" % (key, value))
-        SAMPLE = 1000
+        sample_n = self.MAX_SAMPLES if self.MAX_SAMPLES is not None else len(self.data['mjd'])
         fig = plt.figure()
         plt.grid()
         plt.title(title) if title is not None else None
@@ -213,7 +215,7 @@ class RealData:
             dict_temp = {}
             for key, value in kwargs.items():
                 dict_temp[key] = value[i]
-            plt.plot(self.data['mjd'][:SAMPLE], self.data[elem][:SAMPLE], **dict_temp, alpha=0.3)
+            plt.plot(self.data['mjd'][:sample_n], self.data[elem][:sample_n], **dict_temp, alpha=0.3)
         plt.xlabel('Modified Julian Date')
         plt.legend()
         plt.xticks(rotation=15)
@@ -408,16 +410,18 @@ class RealData:
         plt.grid()
         fig.savefig(VIDEO_FOLDER + "results/" + "pitch_roll_lvlh.png")
 
+        pitch_ = np.unwrap(data_video['pitch'])
+        roll_ = np.unwrap(data_video['roll'])
+
+        d_pitch = np.gradient(pitch_, data_video['MJD'])
+        d_roll = np.gradient(roll_, data_video['MJD'])
+
         fig = plt.figure()
         plt.title("Angular velocity - rotation (3, 1, 2) - BF @ LVLH")
         plt.ylabel("Angle velocity [deg/s]")
         plt.xlabel("MJD")
-        plt.plot(data_video['MJD'][::3][:-1],
-                 np.rad2deg(np.diff(data_video['pitch'][::3])) / (np.diff(data_video['MJD'][::3]) * 86400), '.',
-                 label=r'$\dot{\psi}$')
-        plt.plot(data_video['MJD'][::3][:-1],
-                 np.rad2deg(np.diff(data_video['roll'][::3])) / (np.diff(data_video['MJD'][::3]) * 86400), '.',
-                 label=r'$\dot{\theta}$')
+        plt.plot(data_video['MJD'], d_pitch, '.', label=r'$\dot{\psi}$')
+        plt.plot(data_video['MJD'], d_roll, '.', label=r'$\dot{\theta}$')
         plt.legend()
         plt.grid()
         fig.savefig(VIDEO_FOLDER + "results/" + "dot_pitch_roll_lvlh.png")
@@ -496,15 +500,15 @@ class RealData:
         cos_theta_y_ns[cos_theta_y_ns < 0] = 0
         cos_theta_z_ns[cos_theta_z_ns < 0] = 0
 
-        i_minus_x = 930 * cos_theta_x_ns
-        i_minus_y = 930 * cos_theta_y_ns
-        i_minus_z = 930 * cos_theta_z_ns
+        i_minus_x = self.I_max * cos_theta_x_ns
+        i_minus_y = self.I_max * cos_theta_y_ns
+        i_minus_z = self.I_max * cos_theta_z_ns
         data_['sun3'] = np.abs(i_minus_x)
         data_['sun2'] = np.abs(i_minus_y)
         data_['sun4'] = np.abs(i_minus_z)
-        data_['sun3_t'] = 930 * cos_theta_x
-        data_['sun2_t'] = 930 * cos_theta_y
-        data_['sun4_t'] = 930 * cos_theta_z
+        data_['sun3_t'] = self.I_max * cos_theta_x
+        data_['sun2_t'] = self.I_max * cos_theta_y
+        data_['sun4_t'] = self.I_max * cos_theta_z
         # GYRO MODEL
         dt = self.step
         b_true_gyro = -np.array([0.07, 0.01, -0.04])

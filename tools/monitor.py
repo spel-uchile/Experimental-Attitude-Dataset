@@ -52,11 +52,11 @@ class Monitor:
             x = dataset[x_dataset]
             y = np.array(dataset[y_dataset])
             if step and fft is False:
-                plt.step(x, y * scale, label=y_dataset)
+                plt.step(x, y * scale, label=y_dataset, alpha=0.5)
             elif fft:
-                plt.stem(x, y * scale, label=y_dataset)
+                plt.stem(x, y * scale, label=y_dataset, alpha=0.5)
             else:
-                plt.plot(x, y * scale, label=y_dataset, lw=0.7, ls=ls)
+                plt.plot(x, y * scale, label=y_dataset, lw=0.7, ls=ls, alpha=0.5)
         else:
             color = ['b', 'r']
             i = 0
@@ -65,12 +65,15 @@ class Monitor:
                 y = dataset[yset]
 
                 if step and fft is False:
-                    plt.step(x, y * scale, label=yset, lw=0.7)
+                    plt.step(x, y * scale, label=yset, lw=0.7, alpha=0.5)
                 elif fft:
                     plt.stem(x, y * scale, color[i], label=yset)
                 else:
                     plt.plot(x, y * scale, 'o-', label=yset, lw=0.7)
                 i += 1
+
+        if y_dataset == 'p_cov':
+            plt.yscale('log')
         plt.legend()
         plt.draw()
         return fig

@@ -8,12 +8,9 @@ import numpy as np
 import pickle
 import datetime
 import sys
-# from rich import print
 import os
 import pandas as pd
-
 import cv2
-from astropy.units.quantity_helper.function_helpers import block
 
 from src.kalman_filter.ekf_multy import MEKF
 # from src.kalman_filter.ekf_mag_calibration import MagEKF
@@ -36,8 +33,8 @@ mpl.rcParams['font.size'] = 12
 # CONFIG
 # PROJECT_FOLDER = "./data/20240804/"
 # PROJECT_FOLDER = "./data/M-20230824/"
-# PROJECT_FOLDER = "./data/20230904/"
-PROJECT_FOLDER = "./data/SimulationExample/"
+PROJECT_FOLDER = "./data/20230904/"
+# PROJECT_FOLDER = "./data/SimulationExample/"
 PROJECT_FOLDER = os.path.abspath(PROJECT_FOLDER) + "/"
 module_name = "dataconfig"
 
@@ -89,15 +86,16 @@ if __name__ == '__main__':
     line1, line2 = sensors.search_nearly_tle(SATELLITE_NAME)
     print(line1, line2)
     # TIME
+    MAX_SAMPLES = 200  # len(sensors.data['jd'])
     dt_obc = OBC_DATA_STEP
     dt_sim = WINDOW_TIME['STEP']
     start_datetime = datetime.datetime.strptime(WINDOW_TIME['Start'], TIME_FORMAT)
     stop_datetime = datetime.datetime.strptime(WINDOW_TIME['Stop'], TIME_FORMAT)
     print(start_datetime.timestamp(), stop_datetime.timestamp())
+    sensors.MAX_SAMPLES = MAX_SAMPLES
 
     # MODEL ------------------------------------------------------------------------------------------------------
     # if not exist file channels
-    Imax = 930
     pred_step_sec = 60
     jd_time_vector = sensors.data['jd'].values
     dynamic_orbital = Dynamics(jd_time_vector, line1, line2)
@@ -248,7 +246,6 @@ if __name__ == '__main__':
                        'omega_b_pred': [],
                        'time_pred': [],}
 
-    MAX_SAMPLES = 1000  # len(channels['full_time'])
     if not os.path.exists(PROJECT_FOLDER + "estimation_results.p") or True:
         if EKF_SETUP == 'NORMAL':
             # MEKF
@@ -257,12 +254,6 @@ if __name__ == '__main__':
             ekf_model.sigma_bias = 1e-3 # gyro noise standard deviation [rad/s]
             ekf_model.sigma_omega = 1e-4 # gyro random walk standard deviation [rad/s*s^0.5]
             ekf_model.current_bias = np.array([0.0, 0.0, 0])
-        elif EKF_SETUP == 'FULL':
-            # MEKF
-            P = np.diag([0.5, 0.5, 0.5, 0.01, 0.01, 0.01, 1e-7, 1e-7, 1e-7, 1e-7, 1e-7, 1e-7, 1e-7, 1e-7, 1e-7]) * 100
-            ekf_model = MEKF_FULL(inertia, P=P, Q=np.zeros((15, 15)), R=np.zeros((3, 3)))
-            ekf_model.sigma_bias = 0.0005
-            ekf_model.sigma_omega = 1e-6
 
         q_i2b = np.array([0, 0, 0, 1])
         ekf_model.set_quat(q_i2b, save=True)
@@ -271,13 +262,6 @@ if __name__ == '__main__':
         ekf_model.save_vector(name='css_est', vector=sensors.data[['sun3', 'sun2', 'sun4']].values[0])
         ekf_model.save_vector(name='sun_b_est', vector=Quaternions(q_i2b).frame_conv(channels['sun_sc_i'][0]))
 
-        # ukf_model = UKF(P, dt=1)
-        # ukf_model.set_quat(q_i2b, save=True)
-        # ukf_model.save_vector(name='mag_est', vector=sensors.data[['mag_x', 'mag_y', 'mag_z']].values[0])
-        # ukf_model.save_vector(name='css_est', vector=sensors.data[['sun3', 'sun2', 'sun4']].values[0])
-        # ukf_model.save_vector(name='sun_b_est', vector=Quaternions(q_i2b).frame_conv(sun_sc_i[0]))
-        # ukf_model.set_gyro_measure(omega_b)
-        # ukf_model.set_Q(ekf_model.sigma_omega, ekf_model.sigma_bias)
         k = 1
         moon_sc_b = [moon_b]
         t0 = channels['full_time'][0]
@@ -319,7 +303,7 @@ if __name__ == '__main__':
             is_dark = shadow_zone(channels['sat_pos_i'][k], channels['sun_i'][k])
             if not is_dark:
                 css_3_[css_3_ < 50] = 0.0
-                css_est = ekf_model.inject_vector(css_3_, sun_sc_i_, gain=-Imax * np.eye(3), sigma2=50, sensor='css')
+                css_est = ekf_model.inject_vector(css_3_, sun_sc_i_, gain=-sensors.I_max * np.eye(3), sigma2=50, sensor='css')
             ekf_model.save_vector(name='css_est', vector=css_est)
             ekf_model.save_vector(name='mag_est', vector=mag_est)
             ekf_model.save_vector(name='sun_b_est', vector=Quaternions(ekf_model.current_quaternion).frame_conv(sun_sc_i_))
