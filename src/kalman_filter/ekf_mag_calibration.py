@@ -104,7 +104,7 @@ class MagUKF():
         stop_k = 0
         for mag_i_, mag_b_ in zip(mag_i, mag_sensors):
             self.save()
-            self.run(mag_b_, mag_i_, 2.8 ** 2)# , 5000, 100)
+            self.run(mag_b_, mag_i_, 2.8 ** 2)#, 5000, 100)
             _bias_, _D_scale = self.get_calibration()
             _new_sensor_ukf.append((np.eye(3) + _D_scale) @ mag_b_ - _bias_)
             stop_k += 1

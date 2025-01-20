@@ -94,6 +94,7 @@ class Dynamics(object):
             print("  - {}/{}".format(i, n))
 
         self.channels = {'full_time': self.jd_time_array,
+                         'mjd': self.jd_time_array - _MJD_1858,
                          'sim_time': [0],
                          'sat_pos_i': sat_pos_gcrs,
                          'lonlat': np.array([sat_lon, sat_lat]).T,
@@ -140,6 +141,7 @@ class Dynamics(object):
 
     def load_data(self, data_):
         self.channels = dict(data_)
+        self.channels['mjd'] = self.channels['full_time'] - _MJD_1858
 
     def calc_mag(self):
         mag_ned = self.channels['mag_ned']

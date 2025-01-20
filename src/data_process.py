@@ -158,6 +158,8 @@ class RealData:
                       drawstyle=['steps-post'], marker=['.'])
         self.plot_key(['sun4'], color=['green'], label=['-z [mA]'], name='css4', title="Intensity -z [mA]",
                       drawstyle=['steps-post'], marker=['.'])
+        self.plot_key(['is_dark'], color=['black'], label=['dark flag'], name='is_dark_sim',
+                      title="Dark zone", marker=['.'] * 1)
         if sim_flag:
             self.plot_key(['mag_x_t', 'mag_y_t', 'mag_z_t', '||mag_t||'], color=['blue', 'orange', 'green', 'black'],
                           name="true_mag_mg_sim", title="True Mag Sensor [mG]",
@@ -177,8 +179,6 @@ class RealData:
                           title="True Intensity -y [mA]", marker=['.'] * 4)
             self.plot_key(['sun4', 'sun4_t'], color=['green', 'red'], label=['-z [mA]', '-z True [mA]'], name='css4_sim',
                           title="True Intensity -z [mA]", marker=['.'] * 4)
-            self.plot_key(['is_dark'], color=['black'], label=['dark flag'], name='is_dark_sim',
-                          title="Dark zone", marker=['.'] * 1)
 
         plt.show()
 
@@ -439,7 +439,7 @@ class RealData:
         for key, item in self.data_video.items():
             dt_video =  max(item["MJD"]) - min(item["MJD"])
             print((min(item["MJD"]) - x0) * 86400/ 60)
-            ax.scatter(min(item["MJD"]), 0.5, color=color[i], label=key, marker='x', s=100)
+            ax.scatter(min(item["MJD"]), 0.1, color=color[i], label=key, marker='x', s=100)
             # ax.hlines(0.5, min(item["MJD"]), dt_video + min(item["MJD"]), color=color[i], lw=10, label=key)
             i += 1
         plt.grid()

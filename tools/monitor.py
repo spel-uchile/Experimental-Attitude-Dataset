@@ -13,13 +13,14 @@ import vtk
 
 
 class Monitor:
-    def __init__(self, dataset):
+    def __init__(self, dataset, folder_save):
         self.dataset = dataset
         self.fft_dataset = {}
         self.datetime = self.dataset['DateTime']
         self.position = None
         self.q_i2b = None
         self.sideral = None
+        self.folder_save = folder_save
         self.vectors = {}
 
     def add_data(self, new_data: dict):
@@ -38,7 +39,8 @@ class Monitor:
         self.vectors[name] = {'data': self.dataset[name],
                               'color': color}
 
-    def plot(self, x_dataset, y_dataset, xname=None, yname=None, title=None, step=False, scale=1.0, fft=False, ls='-'):
+    def plot(self, x_dataset, y_dataset, xname=None, yname=None, title=None, step=False, scale=1.0, fft=False, ls='-',
+             legend_list=None):
         if fft:
             dataset = self.fft_dataset
         else:
@@ -52,11 +54,11 @@ class Monitor:
             x = dataset[x_dataset]
             y = np.array(dataset[y_dataset])
             if step and fft is False:
-                plt.step(x, y * scale, label=y_dataset, alpha=0.5)
+                plt.step(x, y * scale, alpha=0.5)
             elif fft:
-                plt.stem(x, y * scale, label=y_dataset, alpha=0.5)
+                plt.stem(x, y * scale, alpha=0.5)
             else:
-                plt.plot(x, y * scale, label=y_dataset, lw=0.7, ls=ls, alpha=0.5)
+                plt.plot(x, y * scale, lw=0.7, ls=ls, alpha=0.5)
         else:
             color = ['b', 'r']
             i = 0
@@ -74,8 +76,12 @@ class Monitor:
 
         if y_dataset == 'p_cov':
             plt.yscale('log')
-        plt.legend()
+        if legend_list is not None:
+            plt.legend(legend_list)
         plt.draw()
+        names_to_save = x_dataset + "_" + y_dataset
+        plt.tight_layout()
+        fig.savefig(self.folder_save + names_to_save + '.png')
         return fig
 
     def fft(self, yset, fstep_list):
