@@ -3,7 +3,7 @@ Created by Elias Obreque
 Date: 10-09-2023
 email: els.obrq@gmail.com
 """
-from ..dynamics.Quaternion import Quaternions
+from ..dynamics.quaternion import Quaternions
 from sklearn.metrics import mean_squared_error
 from tools.mathtools import *
 from .ekf import EKF
@@ -23,7 +23,7 @@ class MEKF(EKF):
         self.current_bias = np.zeros(3)
         self.sigma_omega = 0
         self.sigma_bias = 0
-        self.historical = {'q_est': [], 'b_est': [np.zeros(3)], 'mag_est': [], 'omega_est': [],
+        self.historical = {'mjd_ekf':[], 'q_est': [], 'b_est': [np.zeros(3)], 'mag_est': [], 'omega_est': [],
                            'p_cov': [np.diag(self.covariance_P)], 'css_est': [], 'sun_b_est': []}
 
     def add_reference_vector(self, vector):
@@ -31,8 +31,11 @@ class MEKF(EKF):
 
     def set_gyro_measure(self, value):
         self.omega_state = value
-        print("Current bias", self.current_bias, "Gyro", self.omega_state, "Omega est", self.omega_state - self.current_bias)
+        # print("Current bias", self.current_bias, "Gyro", self.omega_state, "Omega est", self.omega_state - self.current_bias)
         self.historical['omega_est'].append(self.omega_state - self.current_bias)
+
+    def save_time(self, value):
+        self.historical['mjd_ekf'].append(value)
 
     def set_quat(self, value, save=False):
         value = value / np.linalg.norm(value)
@@ -145,7 +148,7 @@ class MEKF(EKF):
         error_q = Quaternions(np.array([*self.internal_state[:3] * 0.5, 1]) * temp)
         error_q.normalize()
         # diff = error_q * Quaternions(self.current_quaternion)
-        current_quaternion = Quaternions(self.current_quaternion) * error_q
+        current_quaternion = Quaternions(self.current_quaternion)  * error_q
         current_quaternion.normalize()
         self.current_quaternion = current_quaternion()
         self.current_bias += self.internal_state[3:]

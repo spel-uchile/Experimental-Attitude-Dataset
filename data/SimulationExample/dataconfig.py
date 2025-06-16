@@ -14,7 +14,7 @@ OBC_DATA_STEP = 1
 # data wind time 15:40
 WINDOW_TIME = {'Start': '2023/08/24 14:00:00',
                'Stop': '2023/08/24 16:00:00',
-               'STEP': 1,
+               # 'STEP': 1.0,
                'FLAG': True}
 TIME_FORMAT = "%Y/%m/%d %H:%M:%S"
 

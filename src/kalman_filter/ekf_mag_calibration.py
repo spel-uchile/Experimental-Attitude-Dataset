@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 from sklearn.metrics import mean_squared_error
 import seaborn as sns
 import pandas as pd
+from tqdm import tqdm
 from tools.pso import PSOMagCalibration
 from scipy.linalg import cholesky
 
@@ -102,7 +103,7 @@ class MagUKF():
     def calibrate(self, mag_i, mag_sensors):
         _new_sensor_ukf = []
         stop_k = 0
-        for mag_i_, mag_b_ in zip(mag_i, mag_sensors):
+        for mag_i_, mag_b_ in tqdm(zip(mag_i, mag_sensors), total=len(mag_i), desc="UKF Calibration"):
             self.save()
             self.run(mag_b_, mag_i_, 2.8 ** 2)#, 5000, 100)
             _bias_, _D_scale = self.get_calibration()
@@ -139,7 +140,7 @@ class MagUKF():
         error_measure = np.linalg.norm(sensor_) ** 2 - np.linalg.norm(reference_) ** 2
         error_model_mean, error_y_direct = self.get_observation(sigma_points, sensor_)
         error_ = (error_measure - error_model_mean)
-        print("ukf Error: ", error_)
+        # print("ukf Error: ", error_)
         sig2 = sigma_2(x_k, cov_sensor_, sensor_)
 
         p_xz = self.get_cross_correlation_matrix(sigma_points, x_k, error_model_mean, error_y_direct)
@@ -285,7 +286,7 @@ class MagUKF():
         plt.title("UKF Magnitude Calibration")
         plt.ylabel('Error [mG]')
         plt.plot(time_, y_true - new_sensor_error, label='RMSE: {:2f} [mG]'.format(np.sqrt(mse_ukf)),
-                 drawstyle='steps-post', marker='.', alpha=0.3)
+                 drawstyle='steps-post', marker='.', alpha=0.7)
         plt.xlabel("Modified Julian Date")
         plt.xticks(rotation=15)
         plt.ticklabel_format(useOffset=False)

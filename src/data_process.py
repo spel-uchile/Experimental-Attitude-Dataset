@@ -4,11 +4,14 @@ Date: 04-09-2023
 email: els.obrq@gmail.com
 """
 import matplotlib.pyplot as plt
+from matplotlib.colorbar import make_axes_gridspec
 from scipy.cluster.hierarchy import dendrogram
 from scipy.optimize import fsolve
 from sklearn.cluster import AgglomerativeClustering
-
-from src.dynamics.Quaternion import Quaternions
+from scipy.signal import butter, filtfilt
+from scipy.linalg import lstsq
+from scipy.optimize import minimize
+from src.dynamics.quaternion import Quaternions
 from tools.mathtools import *
 from tools.two_step_mag_calibration import two_step
 import pandas as pd
@@ -92,7 +95,7 @@ class RealData:
         axes[1].set_title(f"({np.round(center_mean[1], 2)}, {np.round(center_mean[2], 2)})")
         axes[2].set_title(f"({np.round(center_mean[0], 2)}, {np.round(center_mean[1], 2)})")
 
-        axes[0].plot(self.data['mag_x'], self.data['mag_z'], '.')
+        axes[0].plot(self.data['mag_x'], self.data['mag_z'], '.',  alpha=0.7)
         axes[0].plot(center_mean[0], center_mean[2], 'r*')
         # axes[0].plot(contour_center_xz[0], contour_center_xz[1], 'y*')
         # axes[0].plot(hull_points_xz[:, 0], hull_points_xz[:, 1], 'r-', label='Contorno exterior')
@@ -101,7 +104,7 @@ class RealData:
         axes[0].set_xlabel('Mag x [mG]')
         axes[0].set_box_aspect(1)
 
-        axes[1].plot(self.data['mag_y'], self.data['mag_z'], '.')
+        axes[1].plot(self.data['mag_y'], self.data['mag_z'], '.',  alpha=0.7)
         axes[1].plot(center_mean[1], center_mean[2], 'r*')
         axes[1].grid()
         # axes[1].plot(contour_center_yz[0], contour_center_yz[1], 'y*')
@@ -109,7 +112,7 @@ class RealData:
         axes[1].set_ylabel('Mag y [mG]')
         axes[1].set_xlabel('Mag z [mG]')
         axes[1].set_box_aspect(1)
-        axes[2].plot(self.data['mag_x'], self.data['mag_y'], '.')
+        axes[2].plot(self.data['mag_x'], self.data['mag_y'], '.', alpha=0.7)
         axes[2].plot(center_mean[0], center_mean[1], 'r*')
         axes[2].grid()
         # axes[2].plot(contour_center_xy[0], contour_center_xy[1], 'y*')
@@ -130,6 +133,14 @@ class RealData:
         self.sc_inertia[2][0] = inertia_[4]
         self.sc_inertia[1][2] = inertia_[5]
         self.sc_inertia[2][1] = inertia_[5]
+        if "acc_x" in self.data.columns:
+            omega = self.data[['acc_x', 'acc_y', 'acc_z']].values
+            h_ = angular_momentum(self.sc_inertia, omega)
+            self.data['h_x'] = h_[:, 0]
+            self.data['h_y'] = h_[:, 1]
+            self.data['h_z'] = h_[:, 2]
+            self.data['h_norm'] = np.linalg.norm(h_, axis=1)
+            self.data['energy'] = kinetic_energy(self.sc_inertia, omega)
 
     def create_datetime_from_timestamp(self, time_format=None):
         if "timestamp" in self.data.columns:
@@ -147,54 +158,72 @@ class RealData:
 
     def plot_main_data(self, sim_flag=False):
         self.plot_key(['mag_x', 'mag_y', 'mag_z', '||mag||'], color=['blue', 'orange', 'green', 'black'],
-                      name="mag_sensor_mg", title="Raw Mag Sensor [mG]",
-                      label=['x [mG]', 'y [mG]', 'z [mG]', '||mag||'], drawstyle=['steps-post'] * 4, marker=['.'] * 4)
-        self.plot_key(['acc_x', 'acc_y', 'acc_z'], color=['blue', 'orange', 'green'],
-                      name="gyro_sensor_rps", title="Raw Gyro Sensor [rad/s]",
-                      label=['x [rps]', 'y [rps]', 'z [rps]'], drawstyle=['steps-post'] * 4, marker=['.'] * 4)
-        self.plot_key(['sun3'], color=['blue'], label=['-x [mA]'], name='css3', title="Intensity -x [mA]",
-                      drawstyle=['steps-post'], marker=['.'] * 3)
-        self.plot_key(['sun2'], color=['orange'], label=['-y [mA]'], name='css2', title="Intensity -y [mA]",
-                      drawstyle=['steps-post'], marker=['.'])
-        self.plot_key(['sun4'], color=['green'], label=['-z [mA]'], name='css4', title="Intensity -z [mA]",
-                      drawstyle=['steps-post'], marker=['.'])
-        self.plot_key(['is_dark'], color=['black'], label=['dark flag'], name='is_dark_sim',
-                      title="Dark zone", marker=['.'] * 1)
+                      name="mag_sensor_mg", title="Raw Magnetic Sensor", y_name="Magnetic field [mG]",
+                      label=['x', 'y', 'z', r'$||\cdot||$'], drawstyle=['steps-post'] * 4, marker=['.'] * 4, unit="[mG]")
+
+        self.plot_key(['acc_x', 'acc_y', 'acc_z'], color=['blue', 'orange', 'green'], y_name="Angular velocity [rad/s]",
+                      name="gyro_sensor_rps", title="Raw Gyro Sensor",
+                      label=['x', 'y', 'z'], drawstyle=['steps-post'] * 4, marker=['.'] * 4, unit="[rad/s]")
+
+        self.plot_key(['sun3', 'sun2', 'sun4'], color=['blue', 'orange', 'green'], y_name="Current [mA]",
+                      name="css_current", title="CSS Intensity",
+                      label=['-x', '-y', '-z'], drawstyle=['steps-post'] * 4, marker=['.'] * 4, unit="[mA]")
+
+        self.plot_key(['sun3'], color=['blue'], label=['-x'], name='css3', title="CSS Face -x",
+                      drawstyle=['steps-post'], marker=['.'] * 3, y_name="Intensity [mA]", unit="[mA]")
+
+        self.plot_key(['sun2'], color=['orange'], label=['-y'], name='css2', title="CSS Face -y",
+                      drawstyle=['steps-post'], marker=['.'], y_name="Intensity [mA]", unit="[mA]")
+
+        self.plot_key(['sun4'], color=['green'], label=['-z'], name='css4', title="CSS Face -z",
+                      drawstyle=['steps-post'], marker=['.'], y_name="Intensity [mA]", unit="[mA]")
+
+        self.plot_key(['energy'], color=['blue'], label=['Energy [J]'], name='energy_b', drawstyle=['steps-post'],
+                      marker=['.'], y_name='Energy [J]', unit='[J]', title="Rotational Energy")
+
+        self.plot_key(['h_x', 'h_y', 'h_z', 'h_norm'], color=['blue', 'orange', 'green', 'black'],
+                      y_name="Angular momentum [kg m^2/s]",
+                      name="angular_momentum", title="Angular Momentum",
+                      label=['x', 'y', 'z', r'$||\cdot||$'], drawstyle=['steps-post'] * 4, marker=['.'] * 4, unit="[kg m^2/s]")
         if sim_flag:
             self.plot_key(['mag_x_t', 'mag_y_t', 'mag_z_t', '||mag_t||'], color=['blue', 'orange', 'green', 'black'],
-                          name="true_mag_mg_sim", title="True Mag Sensor [mG]",
-                          label=['x [mG]', 'y [mG]', 'z [mG]', '||mag||'], marker=['.'] * 4)
+                          name="true_mag_mg_sim", title="True Magnetic Sensor", y_name="Magnetic field [mG]",
+                          label=['x', 'y', 'z', r'$||\cdot||$'], marker=['.'] * 4, unit="[mG]")
+
             self.plot_key(['w_x', 'w_y', 'w_z'], color=['blue', 'orange', 'green'],
-                          name="true_omega_rps_sim", title="True Angular velocity [rad/s]",
-                          label=['x [rps]', 'y [rps]', 'z [rps]'], marker=['.'] * 4)
+                          name="true_omega_rps_sim", title="True Angular velocity", y_name="Angular velocity [rad/s]",
+                          label=['x', 'y', 'z'], marker=['.'] * 4, unit="[rad/s]")
+
             self.plot_key(['bias_x', 'bias_y', 'bias_z'], color=['blue', 'orange', 'green'],
-                          name="true_bias_rps_sim", title="True bias - Angular velocity [rad/s]",
-                          label=['x [rps]', 'y [rps]', 'z [rps]'], marker=['.'] * 4)
+                          name="true_bias_rps_sim", title="True Gyro bias", y_name="Bias [rad/s]",
+                          label=['x', 'y', 'z'], marker=['.'] * 4, unit="[rad/s]")
+
             self.plot_key(['q_i2b_x', 'q_i2b_y', 'q_i2b_z', 'q_i2b_r'], color=['blue', 'orange', 'green', 'black'],
-                          name="quaternion_i2b_sim", title="Quaternion i2b [-]",
-                          label=['qx', 'qy', 'qz', 'qs'], marker=['.'] * 4)
-            self.plot_key(['sun3', 'sun3_t'], color=['blue', 'red'], label=['-x [mA]', '-x True [mA]'], name='css3_sim',
-                          title="True Intensity -x [mA]", marker=['.'] * 4)
-            self.plot_key(['sun2', 'sun2_t'], color=['orange', 'red'], label=['-y [mA]', '-y True [mA]'], name='css2_sim',
-                          title="True Intensity -y [mA]", marker=['.'] * 4)
-            self.plot_key(['sun4', 'sun4_t'], color=['green', 'red'], label=['-z [mA]', '-z True [mA]'], name='css4_sim',
-                          title="True Intensity -z [mA]", marker=['.'] * 4)
+                          name="quaternion_i2b_sim", title="Quaternion from Inertial to Body Frame", y_name="Quaternion values [-]",
+                          label=['qx', 'qy', 'qz', 'qs'], marker=['.'] * 4, unit="[-]")
 
-        plt.show()
+            self.plot_key(['sun3', 'sun3_t'], color=['blue', 'red'], label=['-x', '-x True'], name='css3_sim',
+                          title="True CSS Face -x", marker=['.'] * 4, y_name="Intensity [mA]", unit="[mA]")
 
+            self.plot_key(['sun2', 'sun2_t'], color=['orange', 'red'], label=['-y', '-y True'], name='css2_sim',
+                          title="True CSS Face -y", marker=['.'] * 4, y_name="Intensity [mA]", unit="[mA]")
 
-    def plot_mag_error(self, channels, sub_name):
-        error_mag_ts = np.linalg.norm(channels['mag_i'], axis=1) - np.linalg.norm(
+            self.plot_key(['sun4', 'sun4_t'], color=['green', 'red'], label=['-z', '-z True'], name='css4_sim',
+                          title="True CSS Face -z", marker=['.'] * 4, y_name="Intensity [mA]", unit="[mA]")
+        plt.close()
+
+    def plot_mag_error(self, channels_mag, sub_name):
+        error_mag_ts = np.linalg.norm(channels_mag, axis=1) - np.linalg.norm(
             self.data[['mag_x', 'mag_y', 'mag_z']],
             axis=1)
 
-        mse_ts = mean_squared_error(np.linalg.norm(channels['mag_i'], axis=1),
+        mse_ts = mean_squared_error(np.linalg.norm(channels_mag, axis=1),
                                     np.linalg.norm(self.data[['mag_x', 'mag_y', 'mag_z']], axis=1))
         fig = plt.figure()
         plt.title(f"Magnitude Error {sub_name} TWO STEP Calibration")
         plt.ylabel('Error [mG]')
         plt.plot(self.data['mjd'], error_mag_ts, label='RMSE: {:2f} [mG]'.format(np.sqrt(mse_ts)),
-                 drawstyle='steps-post', marker='.', alpha=0.3)
+                 drawstyle='steps-post', marker='.', alpha=0.7)
         plt.legend()
         plt.xlabel("Modified Julian Date")
         plt.xticks(rotation=15)
@@ -204,25 +233,47 @@ class RealData:
         fig.savefig(self.folder_path + f"results/two_step_mag_{sub_name}" + '.jpg')
         plt.close(fig)
 
-    def plot_key(self, to_plot: list, name='', title: str = None, show: bool = False, **kwargs):
-        for key, value in kwargs.items():
-            print("%s == %s" % (key, value))
+    def plot_key(self, to_plot: list, y_name='', name='', title: str = None, show: bool = False, unit: str="", **kwargs):
+        # for key, value in kwargs.items():
+        #     print("%s == %s" % (key, value))
         sample_n = self.MAX_SAMPLES if self.MAX_SAMPLES is not None else len(self.data['mjd'])
-        fig = plt.figure()
+        fig = plt.figure(figsize=(8.5, 5))
         plt.grid()
         plt.title(title) if title is not None else None
         for i, elem in enumerate(to_plot):
             dict_temp = {}
             for key, value in kwargs.items():
                 dict_temp[key] = value[i]
-            plt.plot(self.data['mjd'][:sample_n], self.data[elem][:sample_n], **dict_temp, alpha=0.3)
+            plt.plot(self.data['mjd'][:sample_n], self.data[elem][:sample_n], **dict_temp, alpha=0.7)
         plt.xlabel('Modified Julian Date')
-        plt.legend()
+        plt.ylabel(y_name)
+        handles, labels = plt.gca().get_legend_handles_labels()
         plt.xticks(rotation=15)
         plt.ticklabel_format(useOffset=False)
         plt.tight_layout()
-        fig.savefig(self.folder_path + "results/" + name + ".jpg")
+        fig.legend(handles, labels, loc='center left', bbox_to_anchor=(0.85, 0.5), frameon=True)
+        plt.subplots_adjust(right=0.84)
+        fig.savefig(self.folder_path + "results/" + name + ".png", dpi=300)
         plt.show() if show else plt.close(fig)
+
+        if len(to_plot) > 1:
+            fig_ind, axes_ind = plt.subplots(len(to_plot), 1, figsize=(8.5, 5), sharex=True)
+            fig_ind.suptitle(title + " " + unit) if title is not None else None
+            for i, elem in enumerate(to_plot):
+                axes_ind[i].grid()
+                dict_temp = {}
+                for key, value in kwargs.items():
+                    dict_temp[key] = value[i]
+                axes_ind[i].plot(self.data['mjd'][:sample_n], self.data[elem][:sample_n], **dict_temp, alpha=0.7)
+                axes_ind[i].set_ylabel(labels[i])
+
+            axes_ind[-1].set_xlabel('Modified Julian Date')
+            plt.xticks(rotation=15)
+            plt.ticklabel_format(useOffset=False)
+            plt.tight_layout()
+            fig_ind.savefig(self.folder_path + "results/ind_" + name + ".png", dpi=300)
+            plt.show() if show else plt.close(fig)
+
 
     def search_nearly_tle(self, sat_name: str):
         jd_init = self.data['jd'].values[0]
@@ -356,12 +407,12 @@ class RealData:
             self.end_time = timestamp_to_julian(stop)
         self.create_datetime_from_timestamp()
 
-    def estimate_inertia_matrix(self, guess=None):
+    def estimate_inertia_matrix_old(self, guess=None):
         if guess is None:
             guess = np.array([0.03, 0.03, 0.03, 0, 0, 0])
         omega = self.data[['acc_x', 'acc_y', 'acc_z']].values
-        dt_ = np.diff(self.data['timestamp'].values)
-        acc = np.diff(omega, axis=0) / np.atleast_2d(dt_).T
+        # dt_ = np.diff(self.data['timestamp'].values)
+        acc = np.gradient(omega, self.data['timestamp'].values, axis=0)
 
         def f_c(inertia_):
             inertia_ = get_full_D(inertia_)
@@ -371,6 +422,34 @@ class RealData:
 
         sol = fsolve(f_c, guess)
         return sol
+
+    def estimate_inertia_matrix(self, guess=None):
+        if guess is None:
+            guess = np.array([0.03, 0.03, 0.03, 0, 0, 0])
+
+        omega = self.data[['acc_x', 'acc_y', 'acc_z']].values
+        acc = np.gradient(omega, self.data['timestamp'].values, axis=0)
+
+        def loss(I_params, omega):
+            I = get_full_D(I_params)
+
+            T = kinetic_energy(I, omega)
+            H = angular_momentum(I, omega)
+
+            # error = variación de energía y módulo de momento angular
+            dT = np.var(T) / np.sum(I)
+            dH = np.var(np.linalg.norm(H, axis=1)) / np.sum(I)
+            print("VAR: ", dT, dH)
+            return dT + dH - np.sum(I) * 1e-6
+
+        res = minimize(loss, guess, args=(omega,), bounds=[(1e-9, 0.04)] * 6)
+
+        I_est_energy = res.x
+        I = get_full_D(I_est_energy)
+        T = kinetic_energy(I, omega)
+        H = angular_momentum(I, omega)
+        h_norm = np.linalg.norm(H, axis=1)
+        return I_est_energy
 
     def plot_dendrogram_time(self, timestamp_distance: float = 3600):
         """
@@ -413,8 +492,8 @@ class RealData:
         pitch_ = np.unwrap(data_video['pitch'])
         roll_ = np.unwrap(data_video['roll'])
 
-        d_pitch = np.gradient(pitch_, data_video['MJD'])
-        d_roll = np.gradient(roll_, data_video['MJD'])
+        d_pitch = np.gradient(pitch_, data_video['MJD'] * 86400)
+        d_roll = np.gradient(roll_, data_video['MJD'] * 86400)
 
         fig = plt.figure()
         plt.title("Angular velocity - rotation (3, 1, 2) - BF @ LVLH")
@@ -433,23 +512,26 @@ class RealData:
         x0 = min(self.data["mjd"])
         # dt_imu = max(self.data["mjd"]) - min(self.data["mjd"])
         # print(max(self.data["mjd"]) - min(self.data["mjd"]))
-        ax.hlines(0.1, x0, max(self.data["mjd"]), color='blue', lw=3, label='IMU')
+        ax.hlines(0.1, x0, max(self.data["mjd"]), color='blue', lw=3, label='IMU', linestyles ="dotted")
         color = ['orange', 'red', 'green']
         i = 0
         for key, item in self.data_video.items():
             dt_video =  max(item["MJD"]) - min(item["MJD"])
             print((min(item["MJD"]) - x0) * 86400/ 60)
-            ax.scatter(min(item["MJD"]), 0.1, color=color[i], label=key, marker='x', s=100)
+            plt.vlines(min(item["MJD"]), ymin=0.0, ymax=0.2, color=color[i], label=key, lw=1)
             # ax.hlines(0.5, min(item["MJD"]), dt_video + min(item["MJD"]), color=color[i], lw=10, label=key)
             i += 1
         plt.grid()
-        plt.ylim([0, 1])
+        plt.ylim([0, 0.2])
         plt.xlabel("MJD")
         plt.legend()
         fig.savefig(VIDEO_FOLDER + "results/" + "wind_data.png")
+        plt.show()
 
     def create_sim_data(self, channels):
         q_i2b = [Quaternions(q_) for q_ in channels['q_i2b']]
+        # test
+        # q_i2b = [Quaternions(np.array([0, 0, 0, 1.0])) for q_ in channels['q_i2b']]
         w_b = channels['w_b']
         sun_sc_i = channels['sun_sc_i']
         mag_i = channels['mag_i']
@@ -524,6 +606,7 @@ class RealData:
             omega_measure.append(current_omega)
         omega_measure = np.array(omega_measure)
         bias_true = np.array(bias_true)
+        h_ = angular_momentum(self.sc_inertia, w_b)
         data_['acc_x'] = omega_measure[:, 0] * np.rad2deg(1)
         data_['acc_y'] = omega_measure[:, 1] * np.rad2deg(1)
         data_['acc_z'] = omega_measure[:, 2] * np.rad2deg(1)
@@ -541,6 +624,11 @@ class RealData:
         data_['timestamp'] = self.data['timestamp']
         data_['jd'] = self.data['jd']
         data_['mjd'] = self.data['mjd']
+        data_['energy'] = kinetic_energy(self.sc_inertia, w_b)
+        data_['h_x'] = h_[:, 0]
+        data_['h_y'] = h_[:, 1]
+        data_['h_z'] = h_[:, 2]
+        data_['h_norm'] = np.linalg.norm(h_, axis=1)
 
         self.data = pd.DataFrame(data_)
         self.data.reset_index()
@@ -562,9 +650,9 @@ def module_exception_log(method, *args, **kwargs):
 
 def get_full_D(d_vector):
     d_ = np.zeros((3, 3))
-    d_[0, 0] = d_vector[0]
-    d_[1, 1] = d_vector[1]
-    d_[2, 2] = d_vector[2]
+    d_[0, 0] = np.abs(d_vector[0])
+    d_[1, 1] = np.abs(d_vector[1])
+    d_[2, 2] = np.abs(d_vector[2])
 
     d_[0, 1] = d_vector[3]
     d_[0, 2] = d_vector[4]
@@ -597,6 +685,14 @@ def plot_dendrogram(model, **kwargs):
 
     # Plot the corresponding dendrogram
     dendrogram(linkage_matrix, **kwargs)
+
+
+def kinetic_energy(I, omega):
+    # I: [Ixx, Iyy, Izz] (solo momentos principales)
+    return 0.5 * np.einsum('ij,ij->i', omega @ I, omega)
+
+def angular_momentum(I, omega):
+    return omega @ I  # Nx3 matriz
 
 
 if __name__ == '__main__':

@@ -7,6 +7,8 @@ import numpy as np
 from sgp4.api import Satrec
 from sgp4.api import WGS84
 from sgp4.api import SGP4_ERRORS
+
+from src.dynamics.quaternion import Quaternions
 from tools.mathtools import *
 from astropy.time import Time
 from astropy.coordinates import solar_system_ephemeris, EarthLocation, get_body
@@ -14,11 +16,11 @@ from astropy.coordinates import TEME, GCRS, ITRS, CartesianDifferential, Cartesi
 from astropy import units as u
 import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
+from tqdm import tqdm
 import cartopy.feature as cfeature
 from cartopy.mpl.ticker import LongitudeFormatter, LatitudeFormatter
 from src.dynamics.MagEnv import MagEnv, rotationY, rotationZ
 from tools.rodrigues_parameters import get_shadow_set_mrp, omega_from_mpr
-
 
 solar_system_ephemeris.set('de430')
 _MJD_1858 = 2400000.5
@@ -30,6 +32,7 @@ radius_earth = 6378.137  # km
 earth_flat = 1.0 / 298.257223563
 earth_e2 = earth_flat * (2 - earth_flat)
 geod_tolerance = 1e-10  # rad
+MU = 3.986005e14  # m^3/s^2
 
 INERTIA = np.array([[38478.678, 0, 0], [0, 38528.678, 0], [0, 0, 6873.717]]) * 1e-6
 INV_INERTIA = np.linalg.inv(INERTIA)
@@ -37,9 +40,19 @@ loc = EarthLocation(0, 0, 0)
 
 
 class Dynamics(object):
-    def __init__(self, jd_time_array, line1, line2):
-        self.jd_time_array = jd_time_array
-        self.step = (self.jd_time_array[1] - self.jd_time_array[0]) * 86400
+    def __init__(self, start_str = None, stop_str = None, step = None, line1 = None, line2 = None, format_time = None, jd_array = None):
+        if start_str is not None and stop_str is not None and step is not None:
+            init = datetime.datetime.strptime(start_str, format_time)
+            stop = datetime.datetime.strptime(stop_str, format_time)
+            init = init.replace(tzinfo=datetime.timezone.utc).timestamp()
+            stop = stop.replace(tzinfo=datetime.timezone.utc).timestamp()
+            self.start_time = timestamp_to_julian(init)
+            self.end_time = timestamp_to_julian(stop)
+            self.jd_time_array = np.arange(self.start_time, self.end_time + step / 86400,step / 86400)
+            self.step = step
+        elif jd_array is not None:
+            self.jd_time_array = jd_array
+            self.step = (self.jd_time_array[-1] - self.jd_time_array[0]) * 86400
         self.l1 = line1
         self.l2 = line2
         self.channels = {}
@@ -65,15 +78,15 @@ class Dynamics(object):
         sun_sc_i = np.zeros((n, 3))
         moon_sc_i = np.zeros((n, 3))
         is_dark = np.zeros(n)
+        q_i2b = np.zeros((n, 4))
         if sim_flag:
             np.random.seed(42)
-            q_i2b = np.zeros((n, 4))
             q_i2b[0, :3] = np.random.normal(0, 0.4, 3)
             q_i2b[0, 3] = np.sqrt(1 - np.linalg.norm(q_i2b[0, :3]) ** 2)
             q_i2b[0] /= np.linalg.norm(q_i2b[0])
             w_b = np.zeros((n, 3))
             w_b[0] = np.array([-0.3, 0.5, -0.05])
-        for i, t_ in enumerate(self.jd_time_array):
+        for i, t_ in tqdm(enumerate(self.jd_time_array), total=n, desc="Inertial mathematical models"):
             time_ = Time(t_, format='jd', scale='utc')
             sun_pos_gcrs[i] = calc_sun_pos_i(time_)
             moon_pos_gcrs[i] = calc_moon_pos_i(time_)
@@ -90,12 +103,13 @@ class Dynamics(object):
             is_dark[i] = shadow_zone(sat_pos_gcrs[i], sun_pos_gcrs[i])
             if i > 0 and sim_flag:
                 q_i2b[i] = calc_quaternion(q_i2b[i - 1], w_b[i - 1], self.step)
-                w_b[i] = calc_omega_b(w_b[i - 1], self.step, inertia)
-            print("  - {}/{}".format(i, n))
+                r_b = Quaternions(q_i2b[i - 1]).frame_conv(sc_pos) * 1000
+                w_b[i] = calc_omega_b(w_b[i - 1], self.step, inertia, rb=r_b)
+            # print("  - {}/{}".format(i, n))
 
         self.channels = {'full_time': self.jd_time_array,
                          'mjd': self.jd_time_array - _MJD_1858,
-                         'sim_time': [0],
+                         'sim_time': (self.jd_time_array - self.jd_time_array[0]) * 86400,
                          'sat_pos_i': sat_pos_gcrs,
                          'lonlat': np.array([sat_lon, sat_lat]).T,
                          'sat_vel_i': sat_vel_gcrs,
@@ -114,18 +128,17 @@ class Dynamics(object):
         return self.channels
 
     def update_attitude(self, q_i2b_init, w_b_init):
-        print("Rotation Update .........")
         n = len(self.jd_time_array)
         np.random.seed(42)
         q_i2b = np.zeros((n, 4))
         q_i2b[0] = q_i2b_init
         w_b = np.zeros((n, 3))
         w_b[0] = w_b_init
-        for i, t_ in enumerate(self.jd_time_array):
+        for i, t_ in tqdm(enumerate(self.jd_time_array), total=n, desc="Data Rotation Update"):
             if i > 0:
                 q_i2b[i] = calc_quaternion(q_i2b[i - 1], w_b[i - 1], self.step)
-                w_b[i] = calc_omega_b(w_b[i - 1], self.step, self.sc_inertia)
-            print("  - {}/{}".format(i, n))
+                r_b = Quaternions(q_i2b[i - 1]).frame_conv(self.channels['sat_pos_i'][i - 1]) * 1000
+                w_b[i] = calc_omega_b(w_b[i - 1], self.step, self.sc_inertia, rb=r_b)
 
         self.channels['q_i2b'] = q_i2b
         self.channels['w_b'] = w_b
@@ -160,19 +173,34 @@ class Dynamics(object):
         fig = plt.figure(figsize=(12, 8))
         ax = plt.axes(projection=ccrs.PlateCarree())
         ax.stock_img()
-        gl = ax.gridlines(draw_labels=True, linewidth=0.5, color='gray', linestyle='--')
+        gl = ax.gridlines(draw_labels=True, linewidth=1, color='gray', linestyle='--')
         gl.top_labels = False
         gl.right_labels = False
         gl.xformatter = LongitudeFormatter()
         gl.yformatter = LatitudeFormatter()
 
-        ax.add_feature(cfeature.COASTLINE, linewidth=0.5)
-        ax.add_feature(cfeature.BORDERS, linewidth=0.5)
+        ax.add_feature(cfeature.COASTLINE, linewidth=1)
+        ax.add_feature(cfeature.BORDERS, linewidth=1)
         # ax.plot(lon, lat, linestyle='-', color='r', transform=ccrs.Geodetic())
         plt.title('Groundtrack', pad=20, fontsize=12, color='black')
         ax.scatter(lon, lat, color='blue', s=10, transform=ccrs.Geodetic())
         plt.tight_layout()
-        fig.savefig(folder_save + '.jpg')
+        fig.savefig(folder_save + 'Groundtrack.jpg')
+        plt.close(fig)
+
+    def plot_darkness(self, folder_name):
+        is_dark_ = self.channels['is_dark']
+        time_ = self.channels['full_time'] - _MJD_1858
+        fig = plt.figure()
+        plt.title('"Dark zone"', pad=20, fontsize=12, color='black')
+        plt.plot(time_, is_dark_)
+        plt.xlabel('Modified Julian date')
+        plt.legend()
+        plt.xticks(rotation=15)
+        plt.ticklabel_format(useOffset=False)
+        plt.tight_layout()
+        plt.grid()
+        fig.savefig(folder_name + '_eci.jpg')
         plt.close(fig)
 
     def plot_sun_sc(self, folder_name):
@@ -207,7 +235,7 @@ class Dynamics(object):
         plt.plot(time_, mag_x, label='x')
         plt.plot(time_, mag_y, label='y')
         plt.plot(time_, mag_z, label='z')
-        plt.plot(time_, mag_norm, color='black', label='mag norm')
+        plt.plot(time_, mag_norm, color='black', label=r'$||\cdot||$')
         plt.xlabel('Modified Julian date')
         plt.legend()
         plt.xticks(rotation=15)
@@ -227,7 +255,7 @@ class Dynamics(object):
         plt.plot(time_, mag_x, label='x')
         plt.plot(time_, mag_y, label='y')
         plt.plot(time_, mag_z, label='z')
-        plt.plot(time_, mag_norm, color='black', label='mag norm')
+        plt.plot(time_, mag_norm, color='black', label=r'$||\cdot||$')
         plt.legend()
         plt.xlabel('Modified Julian date')
         plt.xticks(rotation=15)
@@ -246,7 +274,7 @@ class Dynamics(object):
         plt.plot(time_, mag_x, label='x')
         plt.plot(time_, mag_y, label='y')
         plt.plot(time_, mag_z, label='z')
-        plt.plot(time_, mag_norm, color='black', label='mag norm')
+        plt.plot(time_, mag_norm, color='black', label=r'$||\cdot||$')
         plt.legend()
         plt.xlabel('Modified Julian date')
         plt.grid()
@@ -256,11 +284,11 @@ class Dynamics(object):
         fig.savefig(folder_name + '_ned.jpg')
         plt.close(fig)
 
-    def plot_earth_vector(self, filename, earth_b_list):
+    def plot_earth_vector(self, foldername, earth_b_list):
         fig, ax = plt.subplots(subplot_kw={"projection": "3d"})
         plt.title("ECI to Body frame")
-        [ax.quiver(*np.zeros(3), *vec_, alpha=0.3, arrow_length_ratio=0.1) for vec_ in earth_b_list]
-        [ax.quiver(*np.zeros(3), *vec_ / np.linalg.norm(vec_), color='black', alpha=0.3, arrow_length_ratio=0.1)
+        [ax.quiver(*np.zeros(3), *vec_, alpha=0.5, arrow_length_ratio=0.1) for vec_ in earth_b_list]
+        [ax.quiver(*np.zeros(3), *vec_ / np.linalg.norm(vec_), color='black', alpha=0.5, arrow_length_ratio=0.1)
          for vec_ in self.channels['sat_pos_i']]
 
         ei_list = self.channels['sat_pos_i'] / np.atleast_2d(np.linalg.norm(self.channels['sat_pos_i'])).T
@@ -275,7 +303,7 @@ class Dynamics(object):
         ax.set_ylim([-2, 2])
         ax.set_zlim([-2, 2])
         plt.grid()
-        fig.savefig(filename)
+        fig.savefig(foldername + "earth_vector_pointing_body.png")
 
         quat = np.array([np.array([*r_vec * np.sin(ang/2), np.cos(ang/2)] for r_vec, ang in zip(rot_vec, ang_vec))])
         # quat = quat / np.atleast_2d(np.linalg.norm(quat)).T
@@ -284,7 +312,7 @@ class Dynamics(object):
         mpr = np.array([mpr_ if np.linalg.norm(mpr_) < 1 else get_shadow_set_mrp(mpr_) for mpr_ in mpr])
 
         time_array = (self.channels['full_time'] - self.channels['full_time'][0]) * 86400
-        degre_p = 9
+        degre_p = 15
         coef_x = np.polyfit(time_array[~np.isnan(mpr[:, 0])], mpr[:, 0][~np.isnan(mpr[:, 0])], degre_p)
         coef_y = np.polyfit(time_array[~np.isnan(mpr[:, 1])], mpr[:, 1][~np.isnan(mpr[:, 1])], degre_p)
         coef_z = np.polyfit(time_array[~np.isnan(mpr[:, 2])], mpr[:, 2][~np.isnan(mpr[:, 2])], degre_p)
@@ -297,25 +325,27 @@ class Dynamics(object):
         sigma_z = poly_z(time_array)
 
         fig = plt.figure()
-        plt.title("MPR")
+        plt.title("MPR vector")
         plt.plot(time_array, mpr)
         plt.plot(time_array, sigma_x)
         plt.plot(time_array, sigma_y)
         plt.plot(time_array, sigma_z)
+        plt.xlabel('Modified Julian date')
         plt.legend([r"$\sigma_x$", r"$\sigma_y$", r"$\sigma_z$", "sx", "sy", "sz"])
         plt.grid()
-        plt.xlabel('Modified Julian date')
+        fig.savefig(foldername + "mpr_vector_body.png")
 
-        time_diff = np.diff(self.channels['full_time'][::3]) * 86400 # seconds
-        d_mpr = np.diff(mpr[::3], axis=0) / np.atleast_2d(time_diff).T
-        omega = np.array([omega_from_mpr(mpr_, dmpr_) for mpr_, dmpr_ in zip(mpr[:-1], d_mpr)])
+        time_diff = self.channels['mjd'].values * 86400 # seconds
+        d_mpr = np.gradient(mpr, time_diff, axis=0)
+        omega = np.array([omega_from_mpr(mpr_, dmpr_) for mpr_, dmpr_ in zip(mpr, d_mpr)])
 
         fig = plt.figure()
-        plt.title("Angular velocity")
-        plt.plot(self.channels['full_time'][:-1:3] - _MJD_1858, omega * np.rad2deg(1))
+        plt.title("Angular velocity from MPR")
+        plt.plot(self.channels['mjd'], omega * np.rad2deg(1))
         plt.legend([r"$\sigma_x$", r"$\sigma_y$", r"$\sigma_z$"])
         plt.grid()
         plt.xlabel('Modified Julian date')
+        fig.savefig(foldername + "mpr_angular_velocity.png")
 
 
 def calc_moon_pos_i(t: Time):
@@ -377,7 +407,7 @@ def calc_quaternion(q0, omega, dt):
     return new_q
 
 
-def calc_omega_b(omega0, dt, inertia_=None):
+def calc_omega_b(omega0, dt, inertia_=None, rb=None):
     args_ = ()
     if inertia_ is not None:
         inertia_ = inertia_
@@ -385,20 +415,32 @@ def calc_omega_b(omega0, dt, inertia_=None):
     else:
         inertia_ = INERTIA
         inv_inertia_ = INV_INERTIA
-    new_omega = omega0 + runge_kutta_4(domega, omega0, dt, inertia_, inv_inertia_)
+    new_omega = omega0 + runge_kutta_4(domega, omega0, dt, inertia_, inv_inertia_, rb)
     return new_omega
 
 
+def get_gradient_torque_vec(rb, inertia_):
+    r_norm_5 = np.linalg.norm(rb) ** 5.0
+    torque_gg = (3 * MU / r_norm_5) * np.cross(rb, inertia_ @ rb)
+    return torque_gg
+
+
 def domega(x_omega_b, *args):
+
     if len(args) > 0:
         inertia_ = args[0]
         inv_inertia_ = args[1]
+        rb = args[2]
     else:
         inertia_ = INERTIA
         inv_inertia_ = INV_INERTIA
+        rb = None
     sk = skewsymmetricmatrix(x_omega_b)
     h_total_b = inertia_.dot(x_omega_b)
-    w_dot = - inv_inertia_ @ (sk @ h_total_b)
+    tau_gg = np.zeros(3)
+    if rb is not None:
+        tau_gg = get_gradient_torque_vec(rb, inertia_)
+    w_dot = - inv_inertia_ @ (sk @ h_total_b - tau_gg)
     return w_dot
 
 

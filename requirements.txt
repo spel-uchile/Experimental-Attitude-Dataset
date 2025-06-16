@@ -18,3 +18,4 @@ vtk~=9.2.6
 QtPy~=2.4.1
 Cartopy~=0.23.0
 rich~=13.9.4
+tqdm

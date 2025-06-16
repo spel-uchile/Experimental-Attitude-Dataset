@@ -7,8 +7,10 @@ import numpy as np
 import datetime
 twopi = 2.0 * np.pi
 deg2rad = np.pi / 180.0
-
-
+# Constant: JD en el momento 1970-01-01 00:00:00 UTC
+JD_AT_UNIX_EPOCH = 2440587.5
+# 2451544.5 es el JD para 2000-01-01 00:00 UTC
+JD_2000 = 2451544.5
 
 
 def runge_kutta_4(function, x, dt, *args):
@@ -57,14 +59,14 @@ def fmod2(x):
 
 
 def julian_to_datetime(julian_date):
-    base_date = datetime.datetime(2000, 1, 1)  # Julian date 2451545 corresponds to this datetime
-    days_elapsed = julian_date - 2451544.5
+    base_date = datetime.datetime(2000, 1, 1, tzinfo=datetime.timezone.utc)  # Julian date 2451544.5 corresponds to this datetime
+    days_elapsed = julian_date - JD_2000
     delta = datetime.timedelta(days=days_elapsed)
     converted_datetime = base_date + delta
     return converted_datetime.replace(tzinfo=datetime.timezone.utc)
 
 
-def jd_to_decyear(jd):
+def jd_to_decyear_old(jd):
     # --------------- find year and days of the year ---------------
     temp = jd - 2415019.5
     tu = temp / 365.25
@@ -83,11 +85,29 @@ def jd_to_decyear(jd):
     decyear = year + days / 365.25
     return decyear
 
+def jd_to_decyear(julian_date_):
+    # jd to  datetime UTC
+    dt = julian_to_datetime(julian_date_)
+
+    # year
+    year = dt.year
+
+    # years N and N+1
+    start_of_year = datetime.datetime(year, 1, 1, tzinfo=datetime.timezone.utc)
+    start_of_next = datetime.datetime(year + 1, 1, 1, tzinfo=datetime.timezone.utc)
+
+    # elapsed
+    elapsed = (dt - start_of_year).total_seconds()
+
+    # total secons
+    total_seconds = (start_of_next - start_of_year).total_seconds()
+
+    # decimal years
+    return year + elapsed / total_seconds
+
 
 def timestamp_to_julian(timestamp):
-    unix_epoch = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)
-    input_datetime = unix_epoch + datetime.timedelta(seconds=timestamp)
-    julian_date = 2440587.5 + (input_datetime - unix_epoch).total_seconds() / 86400
+    julian_date = JD_AT_UNIX_EPOCH + timestamp / 86400
     return julian_date
 
 
@@ -211,3 +231,31 @@ def shadow_zone(sc_pos_from_center_i, sun_pos_from_center_i, center_object_radiu
     else:
         is_dark = False
     return is_dark
+
+
+def inertial_to_lvlh(vec, r_vec, v_vec):
+    r = np.asarray(r_vec, dtype=float)
+    v = np.asarray(v_vec, dtype=float)
+    vec = np.asarray(vec, dtype=float)
+
+    # Vector angular momentum
+    h = np.cross(r, v)
+
+    # base RSW = [R, S, W]
+    R_hat = r / np.linalg.norm(r)  # radial
+    W_hat = h / np.linalg.norm(h)  # cross-track (orbit normal)
+    S_hat = np.cross(W_hat, R_hat)  # along-track
+
+    # Projection
+    lvlh_vec = np.array([
+        np.dot(vec, R_hat),  #  radial
+        np.dot(vec, S_hat),  # along-track
+        np.dot(vec, W_hat)  #  cross-track
+    ])
+    return lvlh_vec
+
+
+if __name__ == '__main__':
+    print(julian_to_datetime(JD_2000))
+
+    print(jd_to_decyear(JD_2000 + 230), " - -", jd_to_decyear_old(JD_2000 + 230))

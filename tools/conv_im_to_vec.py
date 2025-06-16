@@ -171,8 +171,8 @@ def calc_vector_c(pos_im, fl, fov):
     return pos_c
 
 
-def add_filter(col, threshold):
-    fig, ax = plt.subplots(1, 7, figsize=(15, 5))
+def add_filter(col, threshold, file_path=None):
+    fig, ax = plt.subplots(1, 7, figsize=(15, 5), sharey=True, sharex=True)
     fig.suptitle('Test')
     fig.tight_layout()
     ax[0].imshow(col)
@@ -183,7 +183,7 @@ def add_filter(col, threshold):
     color_label = []
     ax[1].imshow(new_col/255)
     ax[1].set_title("KMeans")
-    print("Lighter:", lighter_colors)
+    # print("Lighter:", lighter_colors)
     thereisblack = False
     for elem in lighter_colors:
         finding_color = {}
@@ -196,7 +196,7 @@ def add_filter(col, threshold):
             finding_color['red'] = True if elem[0] > np.mean(elem) + 30 else False
             finding_color['green'] = True if elem[1] > np.mean(elem) + 30 else False
             finding_color['blue'] = True if elem[2] > np.mean(elem) + 30 else False
-        print(finding_color)
+        # print(finding_color)
         thereisblack = finding_color['black']
         color_label.append(finding_color)
 
@@ -252,7 +252,17 @@ def add_filter(col, threshold):
         bw_temp.append(bw)
         ax[5].imshow(bw)
         ax[5].set_title("Body")
+        ax[6].imshow(bw * 0)
+        ax[6].set_title("No Body")
     # plt.show()
+    if file_path is not None:
+        # path folder from file
+        folder_ = os.path.dirname(file_path) + "/results/"
+        if not os.path.exists(folder_):
+            os.makedirs(folder_)
+        file_name = os.path.splitext(os.path.basename(file_path))[0]
+        fig.savefig(folder_ + "add_filers" + file_name + ".png", dpi=300)
+        plt.close()
     return bw_temp
 
 
@@ -280,7 +290,7 @@ def separate_body(bw):
 def get_earth_pointing(name_file, fl, sw, height, threshold=0.98):
     # real picture
     col = Image.open(name_file)
-    bw_temp = add_filter(col, threshold)
+    bw_temp = add_filter(col, threshold, file_path=name_file)
     # sun_radius = fl / (au * 1e3) * d_sun
     edge, center_lines, center_im_list, radius_m, properties, vectors_c = calc_curvature(bw_temp, height)
     # edge, center_lines, center_im_list, radius_m, properties, vectors_c = calc_curvature2(name_file, height)
@@ -313,7 +323,7 @@ def calc_hyperbola(points, fl, pw, h, length):
     exc = e_c[0]
     eyc = e_c[1]
     ezc = e_c[2]
-    center_pixel = np.asarray((e_c * fl / e_c[2])[:2] / pw + length * 0.5, dtype=np.int)
+    center_pixel = np.asarray((e_c * fl / e_c[2])[:2] / pw + length * 0.5, dtype=np.int64)
     a = exc ** 2 - np.cos(alpha) ** 2
     b = 2 * exc * eyc
     c = eyc ** 2 - np.cos(alpha) ** 2
@@ -352,7 +362,7 @@ def calc_sun_curvature(points, fl, pw, length, im, h):
     # coeffs = fit_ellipse(np.array(p_c)[:, 0], np.array(p_c)[:, 1])
     # x0, y0, ap, bp, e, phi = cart_to_pol(coeffs)
     # print("x0, y0", x0, y0)
-    center_pixel = np.asarray((sun_c * fl / sun_c[2])[:2] / pw + length * 0.5, dtype=np.int)
+    center_pixel = np.asarray((sun_c * fl / sun_c[2])[:2] / pw + length * 0.5, dtype=np.int64)
     center_lines_sun = None
     A = sun_c[0] ** 2 + sun_c[1] ** 2 - np.cos(alpha) ** 2
     C = - np.cos(alpha) ** 2
@@ -570,7 +580,7 @@ def eci_to_lvlh(earth_pos_i, sc_vel_i):
     return matrix_i2lvlh
 
 
-def search_tle_by_date(date_time):
+def search_tle_by_date(date_time, file_tle=None):
     jd = jday(float('20' + date_time[4:6]), float(date_time[2:4]),
               float(date_time[:2]), float(date_time[7:9]) - 1.0,
               float(date_time[9:11]),
@@ -578,7 +588,9 @@ def search_tle_by_date(date_time):
     jd_year = jday(float('20' + date_time[4:6]), 1, 1, 0, 0, 0)
     epoch_day = jd - jd_year
     current_epoch_tle = float(date_time[4:6] + str(round(epoch_day, 8)))
-    file_tle = open("sat000052191.txt", 'r').read()
+    if file_tle is None:
+        file_tle = "sat000052191.txt"
+    file_tle = open(file_tle, 'r').read()
     epoch_day_tle = [float(line[17:33]) for line in file_tle.split('\n')[:-1] if line[0] == '1']
     idx = np.argmin(np.abs(current_epoch_tle - np.array(epoch_day_tle)))
     line_1 = file_tle.split('\n')[0 + 2 * idx]
@@ -586,12 +598,12 @@ def search_tle_by_date(date_time):
     return line_1, line_2
 
 
-def get_file_info(name_image):
+def get_file_info(name_image, tle_file=None):
     dt = name_image[:13]
     # UTC + 1 ()
     jd = jday(float('20' + dt[4:6]), float(dt[2:4]), float(dt[:2]), float(dt[7:9]) - 1.0, float(dt[9:11]),
               float(dt[11:]))
-    line1, line2 = search_tle_by_date(dt)
+    line1, line2 = search_tle_by_date(dt, tle_file)
     node = None
     if 'N7' in name_image:
         node = 'N7'
@@ -607,7 +619,7 @@ def get_file_info(name_image):
     else:
         sat = 'NAN'
     satellite = Satrec.twoline2rv(line1, line2, WGS84)
-    _, pos, vel = satellite.sgp4(int(jd), jd % 1)
+    _, pos, vel = satellite.sgp4(int(jd), jd % 1) # km
     sun_pos_i_earth = calc_sun_pos_i(jd)
     sun_pos_from_sc = sun_pos_i_earth - pos
     return jd, sat, node, pos, vel, sun_pos_from_sc, line1, line2

@@ -9,6 +9,10 @@ import matplotlib.pyplot as plt
 from src.dynamics.dynamics_kinematics import calc_omega_b, calc_quaternion
 from tools.pso import PSOStandard
 from src.kalman_filter.ekf_mag_calibration import MagUKF
+from filterpy.kalman import UnscentedKalmanFilter as UKF_py
+from filterpy.kalman import MerweScaledSigmaPoints
+import scipy.linalg
+
 INERTIA = np.array([38478.678, 38528.678, 6873.717, 0, 0, 0]) * 1e-6
 
 
@@ -247,7 +251,7 @@ def estimate_inertia_matrix_pso(omega, t_list, guess=None):
     dt_ = np.diff(t_list)
     acc = np.diff(omega, axis=0) / np.atleast_2d(dt_).T
 
-    sol_pso = PSOStandard(f_c_pso_v2, n_steps=50, n_particles=20)
+    sol_pso = PSOStandard(f_c_pso_v2, n_steps=10, n_particles=20)
     sol_pso.initialize([[35000, 40000],
                         [35000, 40000],
                         [6000, 7000],
@@ -284,15 +288,67 @@ def estimate_inertia_matrix_lineal(omega, t_list, guess=None):
     x = np.linalg.lstsq(A, b, rcond=None)[0]
     return np.array([*x.T[0], 0, 0, 0]) * 1e-6
 
+def estimate_inertia_matrix_ukf_v2(omega, t_list):
+
+    def satellite_dynamics(x, dt, I):
+        o_ = x  # Angular velocity
+        domega = np.linalg.inv(I) @ (-np.cross(o_, I @ o_))  # Euler's equation
+        return I.flatten()
+
+    # UKF state transition function (without constraints)
+    def fx_noconstraint(x, dt, **fx_args):
+        return x
+
+    # UKF state transition function (with constraints)
+    def fx_constraint(x, dt):
+        L = get_full_D(x)  # Lower triangular matrix
+        I = L @ L.T  # Ensures positive definite inertia matrix
+        return satellite_dynamics(x, dt, I)
+
+    # Measurement function
+    def hx(x, **hx_args):
+        return hx_args['hx_args']['measure']  # We observe angular velocity only
+
+    I_est = np.array([30000.0, 30000.0, 5000.0, 0, 0, 0]) * 1e-6
+    # UKF setup (without constraints)
+    x0 = I_est.flatten()
+    n = len(x0)
+    points = MerweScaledSigmaPoints(n, alpha=0.1, beta=2.0, kappa=0)
+    ukf_noconst = UKF_py(dim_x=n, dim_z=3, fx=fx_noconstraint, hx=hx, dt=0.1, points=points)
+    ukf_noconst.x = x0
+    ukf_noconst.P *= 0.1
+
+    # UKF setup (with constraints)
+    # L_init = scipy.linalg.cholesky(I_est, lower=True)
+    # x0_constraint = np.hstack((x0[:3], L_init.flatten()))
+    # ukf_const = UKF_py(dim_x=n, dim_z=3, fx=fx_constraint, hx=hx, dt=0.1, points=points)
+    # ukf_const.x = x0_constraint
+    # ukf_const.P *= 0.1
+
+    # Run UKF estimation
+    for z in omega:
+        ukf_noconst.predict(fx_args={"measure": z})
+        ukf_noconst.update(z, hx_args={"measure": z})
+        # ukf_const.predict()
+        # ukf_const.update(z)
+
+    # Compare results
+    print("Estimated inertia without constraints:")
+    print(get_full_D(ukf_noconst.x))
+    print("\nEstimated inertia with constraints:")
+    # print((ukf_const.x[3:].reshape(3, 3)) @ (ukf_const.x[3:].reshape(3, 3)).T)
+    return get_full_D(ukf_noconst.x)
+
 
 if __name__ == '__main__':
     dt = 0.1
     w_array_true, t_array_true, h_b_array_true, acc_b_array_true = create_data(dt, t_end=1000)
 
     # estimation of inertia
+
     # sol = estimate_inertia_matrix_lineal(w_array_true, t_array_true)
-    sol = estimate_inertia_matrix_pso(w_array_true, t_array_true)
-    # sol = estimate_inertia_matrix_ukf(w_array_true, t_array_true)
+    # sol = estimate_inertia_matrix_pso(w_array_true, t_array_true)
+    sol = estimate_inertia_matrix_ukf_v2(w_array_true, t_array_true)
     # sol = fsolve(f_c_v2, np.array([40000, 40000, 7000]), args=(w_array_true, t_array_true))
 
     print(np.array(sol) * 1e6)

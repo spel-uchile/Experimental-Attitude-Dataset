@@ -4,10 +4,9 @@ Date: 16-09-2023
 email: els.obrq@gmail.com
 """
 import time
-
 from PIL import Image, ImageFilter, ImageDraw
 # from tools.my_scipy import optimize
-from scipy import optimize
+from scipy import optimize, ndimage
 # from tools.my_scipy.optimize import fsolve
 from scipy.spatial.transform import Rotation
 from scipy.optimize import fsolve
@@ -29,13 +28,13 @@ rs = au
 sensor_width_h = 3.68e-3  # m
 sensor_width_v = 2.76e-3  # m
 
-sensor_pixel_h = sensor_width_h / 3280
-sensor_pixel_v = sensor_width_v / 2464
+# sensor_pixel_h = sensor_width_h / 3280
+# sensor_pixel_v = sensor_width_v / 2464
 fov_h = 62.2 # deg
 fov_v = 48.8 # deg
 ROT_CAM2BODY = Rotation.from_euler('zx', [180, -90], degrees=True).inv().as_matrix()
 # sensor_width = 2.76 * 1e-3  # m
-focal_length = 0.00304
+# focal_length = 0.00304
 
 MAX_NUM_LINES = 3
 
@@ -148,75 +147,60 @@ def rgb_to_gray(R, G, B):
     return int(R * 299 / 1000 + G * 587 / 1000 + B * 114 / 1000)
 
 
-def get_body(col, file_name, show=True):
-    # fig_h, ax_h = plt.subplots()
-    # fig, ax = plt.subplots(1, 6, figsize=(15, 5), sharey=True)
-    # fig.suptitle(file_name.split("/")[-1][:-4])
-    # fig.tight_layout()
-    # ax[0].imshow(col)
-    # ax[0].set_title("Original")
-    #
-    # new_data = []
-    # new_col, lighter_colors, counts = decrease_color(col, 10)
-    # color_label = []
+def get_body(col_, file_name, show=True):
+    new_col, lighter_colors, counts = decrease_color(col_, 10)
+    color_label = []
 
-    # thereisblack = False
-    # # for elem in lighter_colors:
-    # #     finding_color = {}
-    # #     finding_color['black'] = True if np.mean(elem) < 20 else False
-    # #     finding_color['white'] = True if np.mean(elem) > 240 else False
-    # #     finding_color['red'] = False
-    # #     finding_color['green'] = False
-    # #     finding_color['blue'] = False
-    # #     if (finding_color['white'] or finding_color['black']) is False:
-    # #         finding_color['red'] = True if elem[0] > np.mean(elem) + 30 else False
-    # #         finding_color['green'] = True if elem[1] > np.mean(elem) + 30 else False
-    # #         finding_color['blue'] = True if elem[2] > np.mean(elem) + 30 else False
-    # #     thereisblack = finding_color['black']
-    # #     color_label.append(finding_color)
-    # #
-    # # # Blue filter
-    # # for i, color_l in enumerate(color_label):
-    # #     if color_l['blue'] and thereisblack:
-    # #         blue_no_black = np.max(new_col, axis=2) - np.min(new_col, axis=2) > 12
-    # #         new_col[blue_no_black] = lighter_colors[0]
+    thereisblack = False
+    for elem in lighter_colors:
+        finding_color = {}
+        finding_color['black'] = True if np.mean(elem) < 20 else False
+        finding_color['white'] = True if np.mean(elem) > 240 else False
+        finding_color['red'] = False
+        finding_color['green'] = False
+        finding_color['blue'] = False
+        if (finding_color['white'] or finding_color['black']) is False:
+            finding_color['red'] = True if elem[0] > np.mean(elem) + 30 else False
+            finding_color['green'] = True if elem[1] > np.mean(elem) + 30 else False
+            finding_color['blue'] = True if elem[2] > np.mean(elem) + 30 else False
+        thereisblack = finding_color['black']
+        color_label.append(finding_color)
+
+    # Blue filter
+    for i, color_l in enumerate(color_label):
+        if color_l['blue'] and thereisblack:
+            blue_no_black = np.max(new_col, axis=2) - np.min(new_col, axis=2) > 10
+            new_col[blue_no_black] = lighter_colors[0]
     #
-    # col.putdata([tuple(colors) for colors in new_col.reshape(-1, 3)])
+    col = col_.copy()
+    col.putdata([tuple(colors) for colors in new_col.reshape(-1, 3)])
+
     gray = col.convert('L')
     # gray = np.asarray(col)[:, :, 2]
-    # lighter_gray = [rgb_to_gray(r, g, b) for r, g, b in zip(lighter_colors[:, 0],
-    #                                                         lighter_colors[:, 1],
-    #                                                         lighter_colors[:, 2])]
+    lighter_gray = [rgb_to_gray(r, g, b) for r, g, b in zip(lighter_colors[:, 0],
+                                                            lighter_colors[:, 1],
+                                                            lighter_colors[:, 2])]
     gray = gray.filter(ImageFilter.SMOOTH)
     bw = np.asarray(gray).copy()
     bw = bw / 255
-    # ax[1].imshow(bw)
-    # ax[1].set_title("Gray")
 
-    bw = bw ** 0.7
-    # if counts[-1] > 4 * counts[-2] and color_label[-1]['black']:
-    #     bw = bw ** (1 / 2)
-
-    # ax_h.plot(np.arange(0, bw.shape[1]), np.sum(bw, axis=0), label="X")
-    # ax_h.plot(np.arange(0, bw.shape[0]), np.sum(bw, axis=1), label="Y")
-    # ax_h.set_title("Histogram")
-    # ax_h.grid()
-    # ax_h.legend()
-    # ax[2].imshow(bw)
-    # ax[2].set_title("Gray ^ (0.7)")
+    if counts[-1] > 4 * counts[-2] and color_label[-1]['black']:
+        bw = bw ** (1 / 2)
 
     # hist = np.histogram(bw, bins=256)[1]
     # max_hist = np.max(hist)
     # min_hist = np.min(hist)
-    mean_cut = 0.25
-    bw[np.where(bw < mean_cut)] = 0.0
-    bw[np.where(bw >= mean_cut)] = 1.0
+    mean_cut = np.mean(bw)
+    bw_mean = bw.copy()
+    bw_mean[np.where(bw < mean_cut)] = 0.0
+    bw_mean[np.where(bw >= mean_cut)] = 1.0
+
+    bw[np.where(bw < 0.98 * max(lighter_gray) / 255)] = 0.0
+    bw[np.where(bw >= 0.98 * max(lighter_gray) / 255)] = 1.0
     bw_temp = []
 
-    # ax[3].imshow(bw)
-    # ax[3].set_title("Binarize")
-    # bw_earth, bw_sun = separate_body(bw)
-    labeled_array, num_features = etiquetar_objetos(bw)
+    # labeled_array, num_features = etiquetar_objetos(bw)
+    labeled_array, num_features = ndimage.label(bw)
     if num_features > 1:
         k = 0
         for i in range(num_features + 1):
@@ -226,30 +210,56 @@ def get_body(col, file_name, show=True):
                 temp = np.zeros(bw.shape)
                 temp[points] = 1
                 bw_temp.append(temp)
-                # ax[4 + k].imshow(temp)
-                # ax[4 + k].set_title("Body - {}".format(k))
                 k += 1
                 if k == 2:
                     break
-            else:
-                pass
-                # ax[5].imshow(bw * 0)
-                # ax[5].set_title("None")
     else:
         bw_temp.append(bw)
-        # ax[4].imshow(bw)
-        #ax[4].set_title("Body")
-        #ax[5].imshow(bw * 0)
-        #ax[5].set_title("None")
-    # create folder
-    name_folder = 'process'
-    folder_ = ''.join([el + '/' for el in file_name.split('/')[:-1]])
-    if not os.path.exists(folder_ + name_folder):
-        os.makedirs(folder_ + name_folder)
-    # fig.savefig("{}_process.png".format(folder_ + name_folder + '/' + file_name.split('/')[-1][:-4]))
-    # fig_h.savefig("{}_hist.png".format(folder_ + name_folder + '/' + file_name.split('/')[-1][:-4]))
-    # plt.close(fig=fig)
-    # plt.close(fig=fig_h)
+
+    if show:
+        # fig_h, ax_h = plt.subplots()
+        fig, ax = plt.subplots(1, 7, figsize=(15, 5), sharey=True)
+        fig.suptitle(file_name.split("/")[-1][:-4])
+        fig.tight_layout()
+        ax[0].imshow(col_)
+        ax[0].set_title("Original")
+
+        # ax_h.plot(np.arange(0, bw.shape[1]), np.sum(bw, axis=0), label="X")
+        # ax_h.plot(np.arange(0, bw.shape[0]), np.sum(bw, axis=1), label="Y")
+        # ax_h.set_title("Histogram")
+        # ax_h.grid()
+        # ax_h.legend()
+
+        ax[1].imshow(new_col/255)
+        ax[1].set_title("KMeans")
+
+        ax[2].imshow(np.asarray(gray)/ 255)
+        ax[2].set_title("Gray")
+
+        ax[3].imshow(bw_mean)
+        ax[3].set_title("Binarize - Mean")
+
+        ax[4].imshow(bw)
+        ax[4].set_title("Binarize - Blue Filter")
+
+        if len(bw_temp) > 1:
+            for k_, temp_ in enumerate(bw_temp):
+                ax[5 + k_].imshow(temp_)
+                ax[5 + k_].set_title("Body - {}".format(k_))
+        else:
+            ax[5].imshow(bw)
+            ax[5].set_title("Body")
+            ax[6].imshow(bw * 0)
+            ax[6].set_title("None")
+        name_folder = 'process'
+        folder_ = ''.join([el + '/' for el in file_name.split('/')[:-1]])
+        if not os.path.exists(folder_ + name_folder):
+            os.makedirs(folder_ + name_folder)
+        fig.savefig("{}_process.png".format(folder_ + name_folder + '/' + file_name.split('/')[-1][:-4]))
+        # fig_h.savefig("{}_hist.png".format(folder_ + name_folder + '/' + file_name.split('/')[-1][:-4]))
+        plt.show()
+        plt.close(fig=fig)
+        #plt.close(fig=fig_h)
     return bw_temp
 
 
@@ -346,16 +356,81 @@ def get_type_radius(im_list):
     return radius_list, point_list
 
 
-def calc_hyperbola(points, fl, pw, ph, h, shape_, center_is_into_):
+def get_type_radius_cv2(opencv_binary_imgs):
+    """
+    Given a list of binary images (each pixel is either 0 or 255),
+    detect circular contours and return for each image a tuple:
+       (earth_center, earth_radius, sun_center, sun_radius)
+    If only one contour is found, classify it based on its position
+    (touching bottom edge => Earth; otherwise => Sun).
+    """
+    results = []
+    radius_list, point_list = [], []
+    for im_bin in opencv_binary_imgs:
+        # -------------------------------------------------
+        # Step 1: Make sure the input is a uint8 binary image
+        # -------------------------------------------------
+        # If the input comes as floats in [0,1] or bool, convert to 0/255 uint8
+        if im_bin.dtype != np.uint8:
+            im = (im_bin.astype(np.float32) * 255.0).astype(np.uint8)
+        else:
+            im = im_bin.copy()
+
+        # Ensure binary format: foreground = 255, background = 0
+        # (In case some pixels are not exactly 0 or 255)
+        _, im_thresh = cv2.threshold(im, 200, 255, cv2.THRESH_BINARY)
+
+        # -------------------------------------------------
+        # Step 2: Find external contours
+        # -------------------------------------------------
+        # RETR_EXTERNAL: only outermost contours
+        # CHAIN_APPROX_SIMPLE: compresses horizontal, vertical, diagonal segments
+
+        contours, _ = cv2.findContours(
+            im,
+            cv2.RETR_TREE,
+            cv2.CHAIN_APPROX_NONE
+        )
+        h, w = im_thresh.shape[:2]
+        filtered = []
+        for cnt in contours:
+            # cnt is an array of shape (N,1,2) with points [[x,y]]
+            pts = cnt.reshape(-1, 2)  # shape = (N,2)
+            xs = pts[:, 0]
+            ys = pts[:, 1]
+
+
+            # Check if any point of this contour lies on the image border
+            on_left = xs == 0
+            on_right = xs == w - 1
+            on_top = ys == 0
+            on_bottom = ys == h - 1
+
+            x_ = xs[~on_left & ~on_right & ~on_top & ~on_bottom]
+            y_ = ys[~on_left & ~on_right & ~on_top & ~on_bottom]
+
+            # Otherwise keep it
+            cnt = np.array([y_, x_])
+            filtered.append(cnt)
+
+        # -------------------------------------------------
+        # Step 3: For each contour, compute min enclosing circle
+        # -------------------------------------------------
+
+        img_h, img_w = im_thresh.shape[:2]
+        areas = [cv2.contourArea(cnt) for cnt in contours]
+        idx_big = np.argmax(areas)
+        (x_center, y_center), radius = cv2.minEnclosingCircle(contours[idx_big])
+        radius_list.append(radius)
+        # point_list.append(contours[idx_big][:, 0].T)
+        point_list.append(filtered[-1])
+    return radius_list, point_list
+
+
+def calc_conical_curvature(points, fl, pw, ph, shape_, h):
     # https://link.springer.com/article/10.1007/s12567-022-00461-0
-    edge_array = np.array([points[0], points[1]]).T
-    # delta_ = 3
-    # lines = []
-    # for k in range(len(points[0])):
-    #     lines.append(edge_array[delta_ + k] - edge_array[k])
-    #     if k >= len(points[0]) - delta_ - 1:
-    #         break
-    points_center = edge_array# [:-delta_] + np.array(lines) * 0.5
+
+    points_center = np.array([points[0], points[1]]).T
     # p_c[x, y, z]
     cx = shape_[1] * 0.5 * pw
     cy = shape_[0] * 0.5 * ph
@@ -368,208 +443,282 @@ def calc_hyperbola(points, fl, pw, ph, h, shape_, center_is_into_):
     e_c = np.linalg.inv(hh.T @ hh) @ hh.T @ y
     e_c = e_c / np.linalg.norm(e_c)
 
+    exc = e_c[0]
+    eyc = e_c[1]
+    ezc = e_c[2]
+
+    a = exc ** 2 - np.cos(alpha) ** 2
+    b = 2 * exc * eyc
+    c = eyc ** 2 - np.cos(alpha) ** 2
+    d = 2 * exc * ezc * fl
+    e = 2 * eyc * ezc * fl
+    f = fl ** 2 * (ezc ** 2 - np.cos(alpha) ** 2)
+    semi_major_axis = np.max([np.sqrt(np.abs(-f / a)), np.sqrt(np.abs(-f / c))])
+    semi_minor_axis = np.min([np.sqrt(np.abs(-f / a)), np.sqrt(np.abs(-f / c))])
+
+    quadratic = b ** 2  - 4 * a * c
+    if quadratic < 0:
+        conical_type = "ellipse"
+        eccentricity = np.sqrt(1 - semi_minor_axis **2 / semi_major_axis **2 )
+    elif quadratic == 0:
+        conical_type = "parabolic"
+        eccentricity = 1
+    else:
+        conical_type = "hyperbolic"
+        eccentricity = np.sqrt(1 + semi_minor_axis ** 2 / semi_major_axis ** 2)
+
+    print("Conical values from picture", e_c, a, b, c, d, e, f)
+
     vec_pix = (e_c * fl / e_c[2])[:2]
     center_pixel = np.zeros(2, dtype=np.int16)
     center_pixel[0] = np.int16(vec_pix[0] / pw + shape_[1] * 0.5)
     center_pixel[1] = np.int16(vec_pix[1] / ph + shape_[0] * 0.5)
 
-    m_slope = e_c[1] / e_c[0]
-
-    a_prime = e_c[0] ** 2 + e_c[1] ** 2 - np.cos(alpha) ** 2
-    c_prime = -np.cos(alpha) ** 2
-    f_prime = -(fl ** 2 * (1 - np.cos(alpha) ** 2) * np.cos(alpha) ** 2) / (e_c[0] ** 2 + e_c[1] ** 2 - np.cos(alpha) ** 2)
-
-    y_sol = m_slope * hh[:, 0]
-    idx_inter = np.argmin(np.abs(y_sol - hh[:, 1]))
-    x_inter, y_inter = hh[:, 0][idx_inter], hh[:, 1][idx_inter]
-
-    dist_pitch = np.sqrt(x_inter ** 2 + y_inter ** 2)
-    ang_center = np.arctan(dist_pitch / fl)
-
-    center_pixel = np.array([x_inter / pw + shape_[1] * 0.5, y_inter / ph + shape_[0] * 0.5])
-
-    angle_orbit = np.pi / 2 - alpha
-
     # vector in body frame,
     e_b = ROT_CAM2BODY @ e_c
+
+    # Pitch and roll to rotate from LVLH to Body frame
     pitch = np.arcsin(e_b[1])
     roll = -np.arctan2(e_b[0], e_b[2])
-
-    roll_xy = roll# np.arctan2(x_inter, y_inter)
-    pos_x_rot = -np.sin(roll_xy) * y_inter + np.cos(roll_xy) * x_inter
-    pos_y_rot = np.sin(roll_xy) * x_inter + np.cos(roll_xy) * y_inter
-
-    # pitch = angle_orbit - ang_center * np.sign(pos_y_rot)
-
-    # 3, 1, 2
-    # q_Xx_1 = np.cos(pitch) * np.sin(roll)
-    # q_Xx_2 = -np.sin(pitch)
-    # q_Xx_3 = np.cos(pitch) * np.cos(roll)
-
-    e_b[0] = np.cos(pitch) * np.sin(roll)
-    e_b[1] = -np.sin(pitch)
-    e_b[2] = np.cos(pitch) * np.cos(roll)
-    return edge_array, points_center, e_c, center_pixel, pitch, roll
+    return points_center, e_c, center_pixel, pitch, roll, semi_major_axis, semi_minor_axis, eccentricity
 
 
-def least_squares_fit(it, jt):
-    """
-    Calcula los parámetros a y b para ajustar una línea usando mínimos cuadrados.
-    Args:
-        it (np.array): Coordenadas de los puntos en el eje i (x).
-        jt (np.array): Coordenadas de los puntos en el eje j (y).
+# def get_vector(file_name, height, height_img=None, width_img=None):
+#     edge_ = None
+#     pitch_, roll_ = np.nan, np.nan
+#     img_cv2_ = None
+#     earth_c = np.array([np.nan, np.nan,np.nan])
+#     vectors_c = {'Earth_c': np.zeros(3), 'Sun_c': np.zeros(3)}
+#     try:
+#         col_o = Image.open(file_name)
+#         if height_img is not None:
+#           col_o = col_o.resize((height_img, width_img))
+#         img_cv2_ = np.asarray(col_o)
+#         dimx, dimy = col_o.size[0], col_o.size[1]
+#         pixel_size_width = sensor_width_h / dimx
+#         pixel_size_height = sensor_width_v / dimy
+#         earth_limit_pixels = ((dimx * 0.3) ** 2 + (dimy * 0.3) ** 2) ** 0.5
+#         t1 = time.time()
+#         # get earth and sun
+#         bw_bodies = get_body(col_o.copy(), file_name, show=True)
+#         print(f"Get bodies {time.time() - t1} seconds")
+#         # get point contour
+#         t1 = time.time()
+#         # radius_, point_list_ = get_type_radius(bw_bodies)
+#         # print(f"Get point my {time.time() - t1} seconds")
+#         # t1 = time.time()
+#         radius_cv2, point_list_ = get_type_radius_cv2(bw_bodies)
+#         # print(f"Get ponit cv2 {time.time() - t1} seconds")
+#         # col = np.asarray(col_o).copy()
+#         # col = col[..., ::-1]
+#         # # col[point_list_cv2[0].T[:, 1], point_list_cv2[0].T[:, 0], :] = [0, 255, 0]
+#         # # col[np.array(point_list_[1]).T[:, 0], np.array(point_list_[1]).T[:, 1], :] = [0, 0, 255]
+#         #
+#         # plt.figure()
+#         #
+#         # plt.imshow(col, interpolation='nearest')
+#         # plt.show()
+#
+#         # print(file_name, radius_)
+#
+#         name_folder = 'vectorization'
+#         folder_ = ''.join([el + '/' for el in file_name.split('/')[:-1]])
+#         if not os.path.exists(folder_ + name_folder):
+#             os.makedirs(folder_ + name_folder)
+#         for radii, pl, bw_temp in zip(radius_, point_list_, bw_bodies):
+#             x0, y0 = bw_temp.shape[1] / 2, bw_temp.shape[0] / 2
+#
+#             if len(pl[0]) * 2 > earth_limit_pixels: # np.min([dimx, dimy]):
+#                 if np.max([dimx, dimy]) * 0.01 < radii[0] < np.max([dimx, dimy]):
+#                     # print("sun")
+#                     sun_edge_array, sun_c, center_pixel, _, _ = calc_conical_curvature(pl,
+#                                                                                        focal_length,
+#                                                                                        pixel_size_width,
+#                                                                                        pixel_size_height,
+#                                                                                        bw_temp.shape,
+#                                                                                        height)
+#                     # edge_, img_cv2_ = get_lines(col, center_pixel)
+#                     vectors_c['Sun_c'] = sun_c
+#
+#                     col = np.asarray(col_o).copy()
+#                     col = col[..., ::-1]
+#                     col[sun_edge_array[:, 0], sun_edge_array[:, 1], :] = [0, 255, 0]
+#                     im = Image.fromarray(col)
+#                     draw = ImageDraw.Draw(im)
+#                     x1, y1 = center_pixel[0], center_pixel[1]
+#
+#                     # print(x0, y0, x1, y1)
+#                     draw.line((x0, y0, x1, y1), fill=(255, 0 *255, 0*255), width=2)
+#
+#                     # draw.text((0, 0), f"R1: {np.round(pitch_ * np.rad2deg(1), 2)} deg", fill="yellow", scale=0.5)
+#                     # draw.text((0, 10), f"R2: {np.round(roll_ * np.rad2deg(1), 2)} deg", fill="yellow", scale=0.5)
+#                     # draw.text((0, 70), f"{int(radii[0])} - {int(radii[1])}", fill="red", scale=0.5)
+#
+#                     edge_, img_cv2_ = None, np.asarray(im)
+#
+#                     fig_cv2 = plt.figure()
+#                     plt.title(f"Timestamp: {file_name.split('/')[-1][:-4]}\n"
+#                               # rf"$\psi$: {np.round(pitch_ * np.rad2deg(1), 3)}, $\theta$: {np.round(roll_ * np.rad2deg(1), 3)} [deg] @ Body frame" + "\n"
+#                               f"Sun center: vector {(np.round(sun_c, 4))}")
+#                     plt.quiver(bw_temp.shape[1] / 2, bw_temp.shape[0] / 2, 0, -bw_temp.shape[0] / 2, color="green")
+#                     plt.quiver(bw_temp.shape[1] / 2, bw_temp.shape[0] / 2, bw_temp.shape[1] / 2, 0, color="red")
+#                     plt.imshow(img_cv2_[..., ::-1])
+#                     plt.plot(center_pixel[0], center_pixel[1], color="red", marker="X")
+#                     plt.grid()
+#                     plt.tight_layout()
+#                     file_name = os.path.splitext(os.path.basename(file_name))[0]
+#                     fig_cv2.savefig("{}.png".format(folder_ + name_folder + '/vec_sun_' + file_name + ".png"), dpi=300)
+#                     plt.close()
+#                 elif np.max([dimx, dimy]) * 1000 >= radii[0] > np.max([dimx, dimy]) and radii[0] > 2 * radii[1]:
+#                     # print("earth")
+#                     if len(pl[0]) < earth_limit_pixels:
+#                         continue
+#                     # Earth: Recalculate with hyperbolic geometry
+#                     center_is_into = bool(bw_temp[int(bw_temp.shape[0] / 2), int(bw_temp.shape[1] / 2)])
+#                     t1 = time.time()
+#                     earth_edge_array, earth_c, center_pixel, pitch_, roll_ = calc_conical_curvature(pl,
+#                                                                                                     focal_length,
+#                                                                                                     pixel_size_width,
+#                                                                                                     pixel_size_height,
+#                                                                                                     height,
+#                                                                                                     bw_temp.shape)
+#                     vectors_c['Earth_c'] = earth_c
+#                     # print(f"Full hyperbola calculation ... {time.time() - t1}")
+#                     col = np.asarray(col_o).copy()
+#                     col = col[..., ::-1]
+#                     col[earth_edge_array[:, 0], earth_edge_array[:, 1], :] = [0, 255, 0]
+#                     im = Image.fromarray(col)
+#                     draw = ImageDraw.Draw(im)
+#                     x1, y1 = center_pixel[0], center_pixel[1]
+#
+#                     # print(x0, y0, x1, y1)
+#                     draw.line((x0, y0, x1, y1), fill=(255, 0 *255, 0*255), width=2)
+#
+#                     alpha = np.arcsin((re + 50) / (re + height))
+#                     angle_ = np.pi/2 - alpha
+#                     proj_plane = focal_length * np.tan(angle_)
+#                     pix_elipse_w = proj_plane / pixel_size_width
+#                     pix_elipse_h = proj_plane / pixel_size_height
+#                     draw.ellipse([(x0 - pix_elipse_w, y0 - pix_elipse_h),
+#                                   (x0 + pix_elipse_w, y0 + pix_elipse_h)] , fill=None, outline="white")
+#
+#                     # draw.text((0, 80), f"{np.round(angle_ * np.rad2deg(1), 1)} deg", fill="white", scale=0.5)
+#                     # draw.text((0, 0), f"R1: {np.round(pitch_ * np.rad2deg(1), 2)} deg", fill="yellow", scale=0.5)
+#                     # draw.text((0, 10), f"R2: {np.round(roll_ * np.rad2deg(1), 2)} deg", fill="yellow", scale=0.5)
+#                     # draw.text((0, 70), f"{int(radii[0])} - {int(radii[1])}", fill="red", scale=0.5)
+#
+#                     edge_, img_cv2_ = None, np.asarray(im)
+#                     # add arrow
+#
+#                     fig_cv2 = plt.figure()
+#                     plt.title(f"Timestamp: {file_name.split('/')[-1][:-4]}\n"
+#                               rf"$\psi$: {np.round(pitch_ * np.rad2deg(1), 3)}, $\theta$: {np.round(roll_ * np.rad2deg(1), 3)} [deg] @ Body frame" + "\n"
+#                               f"Earth center: vector {(np.round(earth_c, 4))}")
+#
+#                     plt.quiver(bw_temp.shape[1] / 2, bw_temp.shape[0] / 2, 0, -bw_temp.shape[0] / 2, color="green")
+#                     plt.quiver(bw_temp.shape[1] / 2, bw_temp.shape[0] / 2, bw_temp.shape[1] / 2, 0, color="red")
+#
+#                     plt.imshow(img_cv2_[..., ::-1])
+#                     plt.plot(center_pixel[0], center_pixel[1], color="red", marker="X")
+#                     plt.grid()
+#                     plt.tight_layout()
+#                     file_name = os.path.splitext(os.path.basename(file_name))[0]
+#                     fig_cv2.savefig("{}.png".format(folder_ + name_folder + '/vec_earth_' + file_name + ".png"), dpi=300)
+#                     plt.close()
+#     except Exception as e:
+#         print(e)
+#         edge_, img_cv2_ = [], None
+#     return edge_, img_cv2_, pitch_, roll_, vectors_c
 
-    Returns:
-        a (float): Pendiente de la línea ajustada.
-        b (float): Intersección con el eje j (ordenada al origen).
-    """
-    # Número total de puntos
-    T = len(it)
 
-    # Validar que las longitudes de las listas coincidan
-    if T != len(jt):
-        raise ValueError("Los vectores 'it' y 'jt' deben tener la misma longitud.")
-
-    # Cálculos intermedios para las sumas
-    sum_it = np.sum(it)
-    sum_jt = np.sum(jt)
-    sum_it_jt = np.sum(it * jt)
-    sum_it2 = np.sum(it ** 2)
-
-    # Calcular a y b usando las fórmulas de las ecuaciones 2a y 2b
-    denominator = T * sum_it2 - (sum_it) ** 2
-    if denominator == 0:
-        raise ValueError("El denominador es cero, no se puede calcular la regresión.")
-
-    a = (T * sum_it_jt - sum_it * sum_jt) / denominator
-    b = (sum_jt * sum_it2 - sum_it * sum_it_jt) / denominator
-
-    return a, b
-
-
-def calc_sun_curvature(points, fl, pw, ph, shape_, h):
-    edge_array = np.array([points[0], points[1]]).T
-    delta_ = 5
-    lines = []
-    for k in range(len(points[0])):
-        lines.append(edge_array[delta_ + k] - edge_array[k])
-        if k >= len(points[0]) - delta_ - 1:
-            break
-    points_center = edge_array[:-delta_] + np.array(lines) * 0.5
-    # p_c[x, y, z]
-    cx = shape_[0] * 0.5 * pw
-    cy = shape_[1] * 0.5 * ph
-    p_c = [np.array([(points_center[i])[1] * pw - cx, (points_center[i][0]) * ph - cy, fl]) for i in
-           range(len(points_center))]
-    hh = np.array(p_c)
-    alpha = np.arcsin(rs / (rs + h))
-    y = np.cos(alpha) * np.array([np.linalg.norm(p_c_i) for p_c_i in p_c])
-    sun_c = np.linalg.inv(hh.T.dot(hh)).dot(hh.T).dot(y)
-    sun_c /= np.linalg.norm(sun_c)
-
-    center_pixel = np.zeros(2, dtype=np.int16)
-    vec_pix = (sun_c * fl / sun_c[2])[:2]
-    center_pixel[0] = np.int16(vec_pix[0] / pw + shape_[0] * 0.5)
-    center_pixel[1] = np.int16(vec_pix[1] / ph + shape_[1] * 0.5)
-    return edge_array, points_center, sun_c, center_pixel
-
-
-def get_vector(file_name, height, height_img=None, width_img=None):
+def get_vector_v2(file_name, height_earth, height_sun, pixel_size_height, pixel_size_width, focal_length):
     edge_ = None
     pitch_, roll_ = np.nan, np.nan
-    img_cv2_ = None
-    earth_c = np.array([np.nan, np.nan,np.nan])
+    vectors_c = {'Earth_c': np.zeros(3), 'Sun_c': np.zeros(3)}
     try:
-        col = Image.open(file_name)
-        if height_img is not None:
-          col = col.resize((height_img, width_img))
-        img_cv2_ = np.asarray(col)
-        dimx, dimy = col.size[0], col.size[1]
-        pixel_size_width = sensor_width_h / dimx
-        pixel_size_height = sensor_width_v / dimy
-        earth_limit_pixels = ((dimx * 0.3) ** 2 + (dimy * 0.3) ** 2) ** 0.5
+        col_o = Image.open(file_name)
+        img_cv2_ = np.asarray(col_o)
+
         t1 = time.time()
-        bw_bodies = get_body(col.copy(), file_name, show=False)
-        radius_, point_list_ = get_type_radius(bw_bodies)
-        print(f"Get bodies {time.time()-t1} seconds")
-        print(file_name, radius_)
-        for radii, pl, bw_temp in zip(radius_, point_list_, bw_bodies):
+        # get earth and sun
+        bw_bodies = get_body(col_o.copy(), file_name, show=True)
+        print(f"Get bodies {time.time() - t1} seconds")
+
+        radius_cv2, point_list_ = get_type_radius_cv2(bw_bodies)
+        name_folder = 'vectorization'
+        folder_ = ''.join([el + '/' for el in file_name.split('/')[:-1]])
+        if not os.path.exists(folder_ + name_folder):
+            os.makedirs(folder_ + name_folder)
+
+        results = {"edge_pixels": [], "vector_c": [], "center_pixel": [], "pitch": [], "roll": [],
+                   "s_major_a": [], "s_minor_a": [], "eccentricity": []}
+
+        for radii, pl, bw_temp in zip(radius_cv2, point_list_, bw_bodies):
+            if radii >= np.max(radius_cv2):
+                height = height_earth
+            else:
+                height = height_sun
+            body_edge_array, body_vec_c, center_pixel, pitch_, roll_, s_major_a, s_minor_a, eccentricity = calc_conical_curvature(pl,
+                                                                                                                    focal_length,
+                                                                                                                    pixel_size_width,
+                                                                                                                    pixel_size_height,
+                                                                                                                    bw_temp.shape,
+                                                                                                                    height)
+
+            results["edge_pixels"].append(body_edge_array)
+            results["vector_c"].append(body_vec_c)
+            results["center_pixel"].append(center_pixel)
+            results["pitch"].append(pitch_)
+            results["roll"].append(roll_)
+            results["s_major_a"].append(s_major_a)
+            results["s_minor_a"].append(s_minor_a)
+            results["eccentricity"].append(eccentricity)
+
+        # check valid calculation
+
+
+        for i, bw_temp in enumerate(bw_bodies):
             x0, y0 = bw_temp.shape[1] / 2, bw_temp.shape[0] / 2
 
-            if len(pl[0]) > earth_limit_pixels: # np.min([dimx, dimy]):
-                if np.max([dimx, dimy]) * 0.1 < radii[0] < np.max([dimx, dimy]) * 0.5 and radii[0] > 100 * radii[1]:
-                    print("sun")
-                    sun_edge_array, sun_points_center, sun_c, center_pixel = calc_sun_curvature(pl,
-                                                                                                focal_length,
-                                                                                                pixel_size_width,
-                                                                                                pixel_size_height,
-                                                                                                [col.size[0], col.size[1]],
-                                                                                                height)
-                    edge_, img_cv2_ = get_lines(col, center_pixel)
-                elif np.max([dimx, dimy]) * 100 >= radii[0] > np.max([dimx, dimy]) and radii[0] > 10 * radii[1]:
-                    print("earth")
-                    if len(pl[0]) < earth_limit_pixels:
-                        continue
-                    # Earth: Recalculate with hyperbolic geometry
-                    center_is_into = bool(bw_temp[int(bw_temp.shape[0] / 2), int(bw_temp.shape[1] / 2)])
-                    t1 = time.time()
+            if results['eccentricity'][i] > 1:
+                # Earth section
+                vectors_c['Earth_c'] = results['vector_c'][i]
+                body_name = "earth"
+            else:
+                vectors_c['Sun_c'] = results['vector_c'][i]
+                body_name = "sun"
 
-                    earth_edge_array, earth_points_center, earth_c, center_pixel, pitch_, roll_ = calc_hyperbola(pl,
-                                                                                                                 focal_length,
-                                                                                                                 pixel_size_width,
-                                                                                                                 pixel_size_height,
-                                                                                                                 height,
-                                                                                                                 bw_temp.shape,
-                                                                                                                 center_is_into)
+            col = np.asarray(col_o).copy()
+            col = col[..., ::-1]
+            col[results['edge_pixels'][i][:, 0], results['edge_pixels'][i][:, 1], :] = [0, 255, 0]
+            im = Image.fromarray(col)
+            draw = ImageDraw.Draw(im)
+            x1, y1 = results['center_pixel'][i][0], results['center_pixel'][i][1]
+            draw.line((x0, y0, x1, y1), fill=(255, 0 *255, 0*255), width=2)
 
-                    print(f"Full hyperbola calculation ... {time.time() - t1}")
-                    col = np.asarray(col).copy()
-                    col = col[..., ::-1]
-                    col[earth_edge_array[:, 0], earth_edge_array[:, 1], :] = [0, 255, 0]
-                    im = Image.fromarray(col)
-                    draw = ImageDraw.Draw(im)
-                    x1, y1 = x0 + earth_c[0] * 50, y0 + earth_c[1] * 50
+            img_cv2_ = np.asarray(im)
+            # add arrow
 
-                    print(x0, y0, x1, y1)
-                    draw.line((x0, y0, x1, y1), fill=(0, 255, 255), width=1)
+            time_number = file_name.split('/')[-1][:-4]
+            fig_cv2 = plt.figure()
+            plt.title(f"Timestamp: {time_number if isinstance(time_number, np.number) else 0.0}\n"
+                      rf"$\psi$: {np.round(results['pitch'][i] * np.rad2deg(1), 3)}, $\theta$: {np.round(results['roll'][i] * np.rad2deg(1), 3)} [deg] @ Body frame" + "\n" if body_name == "earth" else ""
+                      f"Center vector {(np.round(results['vector_c'][i], 4))}")
 
-                    alpha = np.arcsin((re + 50) / (re + height))
-                    angle_ = np.pi/2 - alpha
-                    proj_plane = focal_length * np.tan(angle_)
-                    pix_elipse_w = proj_plane / pixel_size_width
-                    pix_elipse_h = proj_plane / pixel_size_height
-                    draw.ellipse([(x0 - pix_elipse_w, y0 - pix_elipse_h),
-                                  (x0 + pix_elipse_w, y0 + pix_elipse_h)] , fill=None, outline="white")
+            plt.quiver(bw_temp.shape[1] / 2, bw_temp.shape[0] / 2, 0, -bw_temp.shape[0] / 2, color="green")
+            plt.quiver(bw_temp.shape[1] / 2, bw_temp.shape[0] / 2, bw_temp.shape[1] / 2, 0, color="red")
 
-                    draw.text((0, 80), f"{np.round(angle_ * np.rad2deg(1), 1)} deg", fill="white", scale=0.5)
-                    draw.text((0, 0), f"R1: {np.round(pitch_ * np.rad2deg(1), 2)} deg", fill="yellow", scale=0.5)
-                    draw.text((0, 10), f"R2: {np.round(roll_ * np.rad2deg(1), 2)} deg", fill="yellow", scale=0.5)
-                    # draw.text((0, 70), f"{int(radii[0])} - {int(radii[1])}", fill="red", scale=0.5)
-
-                    edge_, img_cv2_ = None, np.asarray(im)
-                    # add arrow
-                    name_folder = 'vectorization'
-                    folder_ = ''.join([el + '/' for el in file_name.split('/')[:-1]])
-                    if not os.path.exists(folder_ + name_folder):
-                        os.makedirs(folder_ + name_folder)
-                    fig_cv2 = plt.figure()
-                    plt.title(f"Timestamp: {file_name.split('/')[-1][:-4]}\n"
-                              rf"$\psi$: {np.round(pitch_ * np.rad2deg(1), 3)}, $\theta$: {np.round(roll_ * np.rad2deg(1), 3)} [deg] @ Body frame" + "\n"
-                              f"Earth center: vector {(np.round(earth_c, 4))}")
-                    plt.quiver(bw_temp.shape[1] / 2, bw_temp.shape[0] / 2, 0, -bw_temp.shape[0] / 3, color="green")
-                    plt.quiver(bw_temp.shape[1] / 2, bw_temp.shape[0] / 2, bw_temp.shape[1] / 3, 0, color="red")
-                    plt.imshow(img_cv2_[..., ::-1])
-                    plt.plot(center_pixel[0], center_pixel[1],
-                             color="red", marker="X")
-                    plt.grid()
-                    plt.tight_layout()
-                    fig_cv2.savefig("{}.png".format(folder_ + name_folder + '/vec_' + file_name.split('/')[-1][:-4]))
-                    plt.close()
+            plt.imshow(img_cv2_[..., ::-1])
+            plt.plot(x1, y1, color="red", marker="X")
+            plt.grid()
+            plt.tight_layout()
+            file_name = os.path.splitext(os.path.basename(file_name))[0]
+            fig_cv2.savefig("{}.png".format(folder_ + name_folder + f'/vec_{body_name}_' + file_name + ".png"), dpi=300)
+            plt.close()
     except Exception as e:
         print(e)
         edge_, img_cv2_ = [], None
-    return edge_, img_cv2_, pitch_, roll_, ROT_CAM2BODY @ earth_c
-
+    return edge_, img_cv2_, pitch_, roll_, vectors_c
 
 if __name__ == '__main__':
     import pandas as pd
@@ -605,7 +754,7 @@ if __name__ == '__main__':
         for filename, ts_i in datalist.values[:]:
             print(k)
             height_sc = 450
-            edge_, img_cv2_, pitch_a, roll_a, earth_b = get_vector(NEW_FOLDER + filename, height_sc, frame_shape[1], frame_shape[0])
+            edge_, img_cv2_, pitch_a, roll_a, earth_b = get_vector_v2(NEW_FOLDER + filename, height_sc)
             pitch_list.append(pitch_a * np.rad2deg(1))
             roll_list.append(roll_a * np.rad2deg(1))
             earth_b_list.append(earth_b)

@@ -54,11 +54,11 @@ class Monitor:
             x = dataset[x_dataset]
             y = np.array(dataset[y_dataset])
             if step and fft is False:
-                plt.step(x, y * scale, alpha=0.5)
+                plt.step(x, y * scale, alpha=0.7)
             elif fft:
-                plt.stem(x, y * scale, alpha=0.5)
+                plt.stem(x, y * scale, alpha=0.7)
             else:
-                plt.plot(x, y * scale, lw=0.7, ls=ls, alpha=0.5)
+                plt.plot(x, y * scale, ls=ls, alpha=0.7)
         else:
             color = ['b', 'r']
             i = 0
@@ -67,7 +67,7 @@ class Monitor:
                 y = dataset[yset]
 
                 if step and fft is False:
-                    plt.step(x, y * scale, label=yset, lw=0.7, alpha=0.5)
+                    plt.step(x, y * scale, label=yset, alpha=0.7)
                 elif fft:
                     plt.stem(x, y * scale, color[i], label=yset)
                 else:
@@ -80,6 +80,8 @@ class Monitor:
             plt.legend(legend_list)
         plt.draw()
         names_to_save = x_dataset + "_" + y_dataset
+        plt.xticks(rotation=15)
+        # plt.ticklabel_format(useOffset=False)
         plt.tight_layout()
         fig.savefig(self.folder_save + names_to_save + '.png')
         return fig
