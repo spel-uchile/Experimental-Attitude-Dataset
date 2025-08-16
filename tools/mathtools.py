@@ -5,6 +5,9 @@ email: els.obrq@gmail.com
 """
 import numpy as np
 import datetime
+from src.dynamics.quaternion import Quaternions
+
+
 twopi = 2.0 * np.pi
 deg2rad = np.pi / 180.0
 # Constant: JD en el momento 1970-01-01 00:00:00 UTC
@@ -253,6 +256,58 @@ def inertial_to_lvlh(vec, r_vec, v_vec):
         np.dot(vec, W_hat)  #  cross-track
     ])
     return lvlh_vec
+
+def trace_method(matrix):
+    """
+    This code uses a modification of the algorithm described in:
+    https://d3cw3dd2w32x2b.cloudfront.net/wp-content/uploads/2015/01/matrix-to-quat.pdf
+    which is itself based on the method described here:
+    http://www.euclideanspace.com/maths/geometry/rotations/conversions/matrixToQuaternion/
+
+    Altered to work with the column vector convention instead of row vectors
+    q = [i, j, k, 0]
+    """
+    m = matrix.conj().transpose()  # This method assumes row-vector and postmultiplication of that vector
+    if m[2, 2] < 0:
+        if m[0, 0] > m[1, 1]:
+            t = 1 + m[0, 0] - m[1, 1] - m[2, 2]
+            q = [t, m[0, 1] + m[1, 0], m[2, 0] + m[0, 2], m[1, 2] - m[2, 1]]
+        else:
+            t = 1 - m[0, 0] + m[1, 1] - m[2, 2]
+            q = [m[0, 1] + m[1, 0], t, m[1, 2] + m[2, 1], m[2, 0] - m[0, 2]]
+    else:
+        if m[0, 0] < -m[1, 1]:
+            t = 1 - m[0, 0] - m[1, 1] + m[2, 2]
+            q = [m[2, 0] + m[0, 2], m[1, 2] + m[2, 1], t, m[0, 1] - m[1, 0]]
+        else:
+            t = 1 + m[0, 0] + m[1, 1] + m[2, 2]
+            q = [m[1, 2] - m[2, 1], m[2, 0] - m[0, 2], m[0, 1] - m[1, 0], t]
+
+    q = np.array(q).astype('float64')
+    q *= 0.5 / np.sqrt(t)
+    q[0:3] *= -1
+    return q
+
+def get_lvlh2b(sat_pos_, sat_vel_, q_i2b_):
+    matrix_i2lvlh = compute_i2lvlh(sat_pos_, sat_vel_)
+    q_ = trace_method(matrix_i2lvlh)
+    current_quaternion_lvlh2b = Quaternions(q_i2b_) * Quaternions(Quaternions(q_).conjugate())
+    return current_quaternion_lvlh2b(), current_quaternion_lvlh2b.toypr()
+
+def compute_i2lvlh(pos_i: np.ndarray, vel_i: np.ndarray):
+    r_norm = np.linalg.norm(pos_i)
+    if r_norm <= 1e-12:
+        return np.eye(3)
+
+    lvlh_z = -pos_i / r_norm
+    lvlh_y = -np.cross(pos_i, vel_i)
+    lvlh_y_norm = np.linalg.norm(lvlh_y)
+    if lvlh_y_norm <= 1e-12:
+        return np.eye(3)
+    lvlh_y /= lvlh_y_norm
+    lvlh_x = np.cross(lvlh_y, lvlh_z)
+    # matrix_i2lvlh = np.empty((3, 3))
+    return np.vstack((lvlh_x, lvlh_y, lvlh_z))
 
 
 if __name__ == '__main__':

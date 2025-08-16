@@ -78,9 +78,9 @@ class EKF:
         H = self.attitude_observer_model(self.internal_state, vector_i)
         if gain is not None:
             H[:3, :3] = gain @ H[:3, :3] / np.linalg.norm(vector_i)
-            # print("residual MRSE error (deg): {}".format(mean_squared_error(new_z_k, vector_b)))
-        #else:
-            #print("residual angle error (deg): {}".format(
+        # print("residual MRSE error (deg): {}".format(mean_squared_error(new_z_k, vector_b)))
+        # else:
+            # print("residual angle error (deg): {}".format(
             #    np.rad2deg(1) * np.arccos(vector_b / np.linalg.norm(vector_b) @ new_z_k / np.linalg.norm(new_z_k))))
         self.update_covariance_matrix(H, self.internal_cov_P)
         self.get_kalman_gain(H, self.internal_cov_P)

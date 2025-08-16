@@ -4,6 +4,7 @@ Date: 22-04-2024
 email: els.obrq@gmail.com
 """
 import numpy as np
+import pickle
 from scipy.optimize import fsolve
 import matplotlib.pyplot as plt
 from src.dynamics.dynamics_kinematics import calc_omega_b, calc_quaternion
@@ -13,7 +14,7 @@ from filterpy.kalman import UnscentedKalmanFilter as UKF_py
 from filterpy.kalman import MerweScaledSigmaPoints
 import scipy.linalg
 
-INERTIA = np.array([38478.678, 38528.678, 6873.717, 0, 0, 0]) * 1e-6
+INERTIA = np.array([38478.678, 38528.678, 6873.717, -100, -50, 50]) * 1e-6
 
 
 class InertiaUKF(MagUKF):
@@ -126,6 +127,15 @@ def get_full_D(d_vector):
     d_[1, 2] = d_vector[5]
     d_[2, 1] = d_vector[5]
     return d_
+
+
+def read_data(dt_, t_end):
+    channels = pickle.load("./channels.pkl")
+
+    dt_data = channels['full_time'][1] -  channels['full_time'][0]
+    w_array_ = channels['w_b']
+    # h_b =
+    return w_array_, np.arange(0, len(w_array_), 1) * dt_, h_b, acc_
 
 
 def create_data(dt_, t_end, inertia_=None, w0: np.array = None, plot_=True):
@@ -342,16 +352,36 @@ def estimate_inertia_matrix_ukf_v2(omega, t_list):
 
 if __name__ == '__main__':
     dt = 0.1
+    print("Real Inertia:")
+    print(INERTIA)
+    print("========================")
     w_array_true, t_array_true, h_b_array_true, acc_b_array_true = create_data(dt, t_end=1000)
+    # w_array_true, t_array_true, h_b_array_true, acc_b_array_true = read_data(dt, t_end=1000)
 
     # estimation of inertia
 
-    # sol = estimate_inertia_matrix_lineal(w_array_true, t_array_true)
-    # sol = estimate_inertia_matrix_pso(w_array_true, t_array_true)
-    sol = estimate_inertia_matrix_ukf_v2(w_array_true, t_array_true)
-    # sol = fsolve(f_c_v2, np.array([40000, 40000, 7000]), args=(w_array_true, t_array_true))
+    sol1 = estimate_inertia_matrix_lineal(w_array_true, t_array_true)
+    print("Estimation Lineal")
+    print(np.array(sol1))
+    print("======================")
 
-    print(np.array(sol) * 1e6)
+    #sol2 = estimate_inertia_matrix_pso(w_array_true, t_array_true)
+    print("Estimation PSO")
+    #print(np.array(sol2))
+    print("======================")
+
+    sol3 = estimate_inertia_matrix_ukf_v2(w_array_true, t_array_true)
+    print("Estimation UKF")
+    print(np.array(sol3))
+    print("======================")
+
+    sol4 = fsolve(f_c_v2, np.array([40000, 40000, 7000]), args=(w_array_true, t_array_true))
+    print("Estimation Fsolve")
+    print(np.array(sol4))
+    print("======================")
+
+    exit()
+
     w_array, t_array, h_b_array, acc_b_array = create_data(dt, t_end=1000, inertia_=np.array(sol))
 
     error_w = w_array_true - w_array

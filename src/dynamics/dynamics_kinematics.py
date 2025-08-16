@@ -29,6 +29,7 @@ DEG2RAD = 1 / RAD2DEG
 au = 149597870.691  # km
 twopi = 2.0 * np.pi
 radius_earth = 6378.137  # km
+radius_sun = 696340 # km
 earth_flat = 1.0 / 298.257223563
 earth_e2 = earth_flat * (2 - earth_flat)
 geod_tolerance = 1e-10  # rad
@@ -85,7 +86,9 @@ class Dynamics(object):
             q_i2b[0, 3] = np.sqrt(1 - np.linalg.norm(q_i2b[0, :3]) ** 2)
             q_i2b[0] /= np.linalg.norm(q_i2b[0])
             w_b = np.zeros((n, 3))
+            h_b = np.zeros((n, 3))
             w_b[0] = np.array([-0.3, 0.5, -0.05])
+            h_b[0] = inertia @ w_b[0]
         for i, t_ in tqdm(enumerate(self.jd_time_array), total=n, desc="Inertial mathematical models"):
             time_ = Time(t_, format='jd', scale='utc')
             sun_pos_gcrs[i] = calc_sun_pos_i(time_)
@@ -105,6 +108,7 @@ class Dynamics(object):
                 q_i2b[i] = calc_quaternion(q_i2b[i - 1], w_b[i - 1], self.step)
                 r_b = Quaternions(q_i2b[i - 1]).frame_conv(sc_pos) * 1000
                 w_b[i] = calc_omega_b(w_b[i - 1], self.step, inertia, rb=r_b)
+                h_b[i] = inertia @ w_b[i]
             # print("  - {}/{}".format(i, n))
 
         self.channels = {'full_time': self.jd_time_array,
@@ -123,7 +127,7 @@ class Dynamics(object):
                          'sideral': sideral,
                          'is_dark': is_dark}
         if sim_flag:
-            new_data = {'q_i2b': q_i2b, 'w_b': w_b}
+            new_data = {'q_i2b': q_i2b, 'w_b': w_b, 'h_b': h_b}
             self.channels = {**self.channels, **new_data}
         return self.channels
 
@@ -151,6 +155,14 @@ class Dynamics(object):
         time_ = Time(ts_jd, format='jd', scale='utc')
         sc_pos, sc_vel, sc_lon, sc_lat, sc_alt = calc_sat_pos_i(self.l1, self.l2, time_)
         return sc_alt
+
+    def get_distance_sun(self, ts_id):
+        ts_jd = timestamp_to_julian(ts_id)
+        time_ = Time(ts_jd, format='jd', scale='utc')
+        sc_pos, sc_vel, sc_lon, sc_lat, sc_alt = calc_sat_pos_i(self.l1, self.l2, time_)
+        sun_ = calc_sun_pos_i(time_)
+        rel_pos = sun_ - sc_pos
+        return np.linalg.norm(rel_pos) - radius_sun
 
     def load_data(self, data_):
         self.channels = dict(data_)
@@ -335,7 +347,7 @@ class Dynamics(object):
         plt.grid()
         fig.savefig(foldername + "mpr_vector_body.png")
 
-        time_diff = self.channels['mjd'].values * 86400 # seconds
+        time_diff = np.array(self.channels['mjd']) * 86400 # seconds
         d_mpr = np.gradient(mpr, time_diff, axis=0)
         omega = np.array([omega_from_mpr(mpr_, dmpr_) for mpr_, dmpr_ in zip(mpr, d_mpr)])
 
@@ -351,12 +363,12 @@ class Dynamics(object):
 def calc_moon_pos_i(t: Time):
     # time = Time(DATE)
     moon_body = get_body('moon', t, loc)
-    return np.asarray(moon_body.cartesian.xyz) / 1000  # km GCRS
+    return np.asarray(moon_body.cartesian.xyz) # km GCRS
 
 
 def calc_sun_pos_i(t: Time):
     sun_body = get_body('sun', t, loc)
-    sun_pos = np.asarray(sun_body.cartesian.xyz) / 1000  # km GCRS
+    sun_pos = np.asarray(sun_body.cartesian.xyz) # km GCRS
     return sun_pos
 
 

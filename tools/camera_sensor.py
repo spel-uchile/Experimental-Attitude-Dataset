@@ -13,6 +13,7 @@ from src.dynamics.quaternion import Quaternions
 from tools.conv_im_to_vec import get_file_info, get_earth_pointing
 from tools.get_point_vector_from_picture import get_vector_v2
 from tools.mathtools import inertial_to_lvlh
+import matplotlib.pyplot as plt
 
 radius_earth = 6378.137  # km
 radius_sun = 696340 # km
@@ -33,7 +34,8 @@ class CamSensor:
 
     # sensor_width = 2.76 * 1e-3 # m
 
-    def __init__(self, q_c2b=None, r_c2b=None, debug=False, add_filter=False, target_resolution=102):
+    def __init__(self, q_c2b=None, r_c2b=None, debug=False, add_filter=False,
+                 target_resolution: tuple[int , int] = None):
         self.normal_vec_c = np.array([1.0, 0.0, 0.0])
         self.q_b2c = None
         self.debug_test = debug
@@ -64,15 +66,15 @@ class CamSensor:
         self.historical_imagen = []
         self.condition_ = None
 
-    def compute_picture(self, current_q_lvlh2b: np.ndarray, earth_pos_i_: np.ndarray, sc_vel_i_: np.ndarray, sun_pos_sc_i_: np.ndarray):
-        lvlh_z = earth_pos_i_ / np.linalg.norm(earth_pos_i_)
-        lvlh_y = np.cross(earth_pos_i_, sc_vel_i_) / np.linalg.norm(np.cross(earth_pos_i_, sc_vel_i_) )
-        lvlh_x = np.cross(lvlh_y, lvlh_z)
-        matrix_i2lvlh = np.array([lvlh_x, lvlh_y, lvlh_z])
-
-        earth_pos_lvlh_ = matrix_i2lvlh @ earth_pos_i_
-        sun_pos_lvlh_ = matrix_i2lvlh @ sun_pos_sc_i_
-        self.measure(current_q_lvlh2b, earth_pos_lvlh_, sun_pos_lvlh_)
+    def compute_picture(self, current_q_lvlh2b: np.ndarray, earth_pos_b: np.ndarray, sc_vel_i_: np.ndarray, sun_pos_b: np.ndarray):
+        # lvlh_z = earth_pos_i_ / np.linalg.norm(earth_pos_i_)
+        # lvlh_y = np.cross(earth_pos_i_, sc_vel_i_) / np.linalg.norm(np.cross(earth_pos_i_, sc_vel_i_) )
+        # lvlh_x = np.cross(lvlh_y, lvlh_z)
+        # matrix_i2lvlh = np.array([lvlh_x, lvlh_y, lvlh_z])
+        #
+        # earth_pos_lvlh_ = matrix_i2lvlh @ earth_pos_i_
+        # sun_pos_lvlh_ = matrix_i2lvlh @ sun_pos_sc_i_
+        self.measure(earth_pos_b, sun_pos_b)
 
     def compute_picture_from_vectors(self, earth_c_v, sun_c_v):
         self.current_imagen *= 0
@@ -81,15 +83,14 @@ class CamSensor:
         if np.linalg.norm(sun_c_v) > 0:
             self.add_body_in_picture(sun_c_v, radius_sun * 15)
 
-        if self.add_filter_flag:
-            self.add_filter()
+        self.add_filter()
 
-    def measure(self, q_lvlh2b, earth_pos_lvlh_, sun_pos_lvlh_):
-        q_lvlh2b = Quaternions(q_lvlh2b)
-        q_lvlh2b.normalize()
+    def measure(self, earth_pos_b_, sun_pos_b_):
+        # q_lvlh2b = Quaternions(q_lvlh2b)
+        # q_lvlh2b.normalize()
 
-        earth_pos_b_ = q_lvlh2b.frame_conv(earth_pos_lvlh_)
-        sun_pos_b_ = q_lvlh2b.frame_conv(sun_pos_lvlh_)
+        # earth_pos_b_ = q_lvlh2b.frame_conv(earth_pos_lvlh_)
+        # sun_pos_b_ = q_lvlh2b.frame_conv(sun_pos_lvlh_)
 
         if self.q_b2c is not None:
             earth_pos_c = self.q_b2c.frame_conv(earth_pos_b_)
@@ -99,25 +100,28 @@ class CamSensor:
             sun_pos_c = self.r_b2c @ sun_pos_b_
 
         self.current_imagen = np.zeros((self.resolution_v, self.resolution_h), dtype=float)
-        if np.linalg.norm(earth_pos_c) > 100:
+        if np.linalg.norm(earth_pos_c) > 100 + radius_earth:
+            #print("Earth: ")
             self.add_body_in_picture(earth_pos_c, radius_earth)
-        if np.linalg.norm(sun_pos_c) > 100:
+        if np.linalg.norm(sun_pos_c) > 100 + radius_earth:
+            #print("Sun: ")
             self.add_body_in_picture(sun_pos_c, radius_sun * 15)
 
-        if self.add_filter_flag:
-            self.add_filter()
+        self.add_filter()
 
         if self.debug_test:
             self.compare_simulation()
 
     def add_filter(self):
-        self.current_imagen = self.crop_to_square(self.current_imagen)
-        self.current_imagen = self.resize_gray_array(self.current_imagen, self.target_resolution, "nearest")
+        if self.add_filter_flag:
+            self.current_imagen = self.crop_to_square(self.current_imagen)
+        if self.target_resolution is not None:
+            self.current_imagen = self.resize_gray_array(self.current_imagen, self.target_resolution, "nearest")
 
     @staticmethod
     def resize_gray_array(
             square_array: np.ndarray,
-            new_size: int,
+            new_size: tuple[int, int],
             interpolation: str = 'bilinear'
     ) -> np.ndarray:
         """
@@ -158,7 +162,7 @@ class CamSensor:
             pil_in = Image.fromarray(arr_uint8)
 
         # Resize with PIL
-        pil_resized = pil_in.resize((new_size, new_size), resample=pil_mode)
+        pil_resized = pil_in.resize(new_size, resample=pil_mode)
 
         # Convert back to NumPy
         arr_resized = np.array(pil_resized)
@@ -193,12 +197,16 @@ class CamSensor:
         return cropped
 
     def compare_simulation(self):
+        print("Comparing simulation [DEBUG]...")
         earth_pos_c = np.array([-1000, radius_earth + 500, 3000])
+        earth_pos_c = np.array([0.98, -0.0312, 0.04]) * (radius_earth + 500)
         altitude_earth = np.linalg.norm(earth_pos_c) - radius_earth
         sun_pos_c = np.array([0.067, -0.285, 0.92]) * 149597870.70
-        # sun_pos_c = np.array([0, 0, 1]) * 149597870.70
-
         altitude_sun = np.linalg.norm(sun_pos_c) - radius_sun
+        # sun_pos_c = np.array([0, 0, 1]) * 149597870.70
+        print("Earth vector: ", earth_pos_c / np.linalg.norm(earth_pos_c), altitude_earth)
+        print("Sun vector: ", sun_pos_c / np.linalg.norm(sun_pos_c), altitude_sun)
+
         self.current_imagen = np.zeros((self.resolution_v, self.resolution_h), dtype=float)
         if np.linalg.norm(earth_pos_c) > 0:
             self.add_body_in_picture(earth_pos_c, radius_earth)
@@ -259,12 +267,24 @@ class CamSensor:
 
 
     def add_body_in_picture(self, input_pos_c, body_radii):
-        unit_input_pos_c = input_pos_c / np.linalg.norm(input_pos_c)
-
+        h_ = np.linalg.norm(input_pos_c)
+        unit_input_pos_c = input_pos_c / h_
+        ang = np.arcsin((body_radii) / h_) * RAD2DEG
+        theta_error = np.arccos(unit_input_pos_c[2]) * RAD2DEG
+        # if ang > theta_error - max(self.fov_h, self.fov_v) / 2:
+        #     return
         a, b, c, d, e, f = self.get_coefficients(unit_input_pos_c, np.linalg.norm(input_pos_c), body_radii)
-        print("Conical values from vector: ", unit_input_pos_c, a, b, c, d, e, f)
+        #print("Conical values from vector: ", unit_input_pos_c, a, b, c, d, e, f)
         conical_value = a * self.px_full ** 2 + b * self.py_full * self.px_full + c * self.py_full ** 2 + d * self.px_full + e * self.py_full + f
-        self.current_imagen[conical_value >= 0] = 1
+
+        mask = (conical_value >= 0)
+        ray_dot = (
+                self.px_full * unit_input_pos_c[0]
+                + self.py_full * unit_input_pos_c[1]
+                + self.focal_length * unit_input_pos_c[2]
+        )
+        mask &= (ray_dot > 0)
+        self.current_imagen[mask] = 1
 
     def get_coefficients(self, e_c, me, body_re):
         if np.linalg.norm(me) * 1e-3  - body_re < 0.0:
@@ -309,7 +329,7 @@ if __name__ == "__main__":
     tle_file = "../data/sat000052191.txt"
     ROT_CAM2BODY = Rotation.from_euler('zx', [180, -90], degrees=True).inv().as_matrix()
 
-    cam_test = CamSensor(r_c2b=ROT_CAM2BODY, debug=True, add_filter=True, target_resolution=102)
+    cam_test = CamSensor(r_c2b=ROT_CAM2BODY, debug=True, add_filter=False)#, target_resolution=(102, 102))
     cam_test.compute_picture(np.array([0, 0, 0, 1]), np.array([1, 0, 0]), np.array([0, 1, 0]), np.ones(3))
 
     folder = "example_picture/"
@@ -323,9 +343,6 @@ if __name__ == "__main__":
         edge_, img_cv2_, p_, r_, center_point_c  = get_vector_v2(folder + earth_image, altitude_earth, altitude_sun,
                                                                  CamSensor.sensor_pixel_v, CamSensor.sensor_pixel_h,
                                                                  CamSensor.focal_length)
-        # center_im_list, center_point_c, bw_temp, edge, radius_m, _ = get_earth_pointing(folder + earth_image,
-        #                                                                              0.0035, 2.74, altitude,
-        #                                                                                 threshold=0.9) # name_file, fl, sw, height, threshold=0.98
 
         dict_info = {'jd': jd, 'pos': pos_i, 'vel': vel_i, 'sat': sat, 'node': node, 'sun_pos_sc_i': sun_pos_sc_i,
                      'img': img_cv2_, 'earth_pos_c': center_point_c['Earth_c'], 'sun_pos_c': center_point_c['Sun_c'],}
@@ -349,7 +366,7 @@ if __name__ == "__main__":
     roll_list = [np.arctan2(earth_pos_b_i[1], earth_pos_b_i[2]) for earth_pos_b_i in earth_pos_b_list]
     q_lvlh2b_m = [Quaternions.quat_from_ypr(0, pitch_, roll_) for pitch_, roll_ in zip(pitch_list, roll_list)]
 
-    cam = [CamSensor(r_c2b=ROT_CAM2BODY, debug=False, add_filter=True, target_resolution=102) for i in range(len(dataset))]
+    cam = [CamSensor(r_c2b=ROT_CAM2BODY, debug=False, add_filter=True, target_resolution=(102, 102)) for i in range(len(dataset))]
 
     # simulation with quaternion
     # earth_perimeter = [cam[i].compute_picture(q(), d_['pos'], d_['vel'], d_['sun_pos_sc_i']) for i, (q, d_) in enumerate(zip(q_lvlh2b_m, dataset))]
@@ -368,16 +385,16 @@ if __name__ == "__main__":
         fig_, ax = plt.subplots(1, 2)
         # fig_list.append(fig_)
         fig_.suptitle("Camera frame\nYaw: {:.2f}° - Pitch: {:.2f}° - Roll: {:.2f}°".format(yaw_list[i] * RAD2DEG,
-                                                                                       roll_list[i] * RAD2DEG,
-                                                                                       pitch_list[i] * RAD2DEG))
+                                                                                           roll_list[i] * RAD2DEG,
+                                                                                           pitch_list[i] * RAD2DEG))
         if dataset[i]['img'] is not None:
             ax[0].imshow(dataset[i]['img'][..., ::-1])
         else:
             ax[0].imshow(np.zeros_like(cam_view_image[i]))
         ax[1].imshow(cam_view_image[i], cmap=plt.cm.gray, vmin=0, vmax=1)
         ax[1].hlines(cam_view_image[i].shape[0] * 0.5, 0, cam_view_image[i].shape[1] - 0.5)
-        ax[1].vlines(cam_view_image[i].shape[0] * 0.5, 0, cam_view_image[i].shape[1] - 0.5)
-        ax[1].scatter(cam_view_image[i].shape[0] * 0.5, cam_view_image[i].shape[1] * 0.5, marker='x', color='red')
+        ax[1].vlines(cam_view_image[i].shape[1] * 0.5, 0, cam_view_image[i].shape[0] - 0.5)
+        ax[1].scatter(cam_view_image[i].shape[1] * 0.5, cam_view_image[i].shape[0] * 0.5, marker='x', color='red')
         ax[1].grid()
         fig_.savefig(folder + "/results/sim_picture" + name_files[i] + ".png", dpi=300)
         plt.close()

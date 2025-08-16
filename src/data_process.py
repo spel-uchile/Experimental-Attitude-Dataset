@@ -3,32 +3,43 @@ Created by Elias Obreque
 Date: 04-09-2023
 email: els.obrq@gmail.com
 """
-import matplotlib.pyplot as plt
-from matplotlib.colorbar import make_axes_gridspec
-from scipy.cluster.hierarchy import dendrogram
-from scipy.optimize import fsolve
-from sklearn.cluster import AgglomerativeClustering
-from scipy.signal import butter, filtfilt
-from scipy.linalg import lstsq
-from scipy.optimize import minimize
-from src.dynamics.quaternion import Quaternions
-from tools.mathtools import *
-from tools.two_step_mag_calibration import two_step
+
+import os
+import json
+import pickle
+
 import pandas as pd
 import numpy as np
 import datetime
 import functools
-import json
-import os
-from src.kalman_filter.ekf_omega import EKFOmega
-from scipy.spatial import ConvexHull
+import cv2
+from future.backports.http.cookiejar import debug
+from tqdm import tqdm
 from matplotlib.patches import Rectangle
+import matplotlib.pyplot as plt
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+from cartopy.mpl.ticker import LongitudeFormatter, LatitudeFormatter
+from matplotlib.colorbar import make_axes_gridspec
+from scipy.cluster.hierarchy import dendrogram
+from scipy.optimize import fsolve, minimize
 from sklearn.metrics import mean_squared_error
-from sklearn.cluster import KMeans
+from sklearn.cluster import KMeans, AgglomerativeClustering
+from scipy.spatial.transform import Rotation, Slerp
+
+from src.kalman_filter.ekf_omega import EKFOmega
+from src.dynamics.quaternion import Quaternions
+from tools.mathtools import *
+from tools.two_step_mag_calibration import two_step
+from tools.camera_sensor import CamSensor
+
 
 ts2022 = 1640995200 / 86400  # day
 jd2022 = 2459580.50000
 _MJD_1858 = 2400000.5
+SIM_VIDEO_DURATION = 20 # sec
+ROT_CAM2BODY = Rotation.from_euler('zx', [180, -90], degrees=True).inv().as_matrix()
+fourcc = cv2.VideoWriter_fourcc(*'mp4v')
 
 
 class RealData:
@@ -178,7 +189,7 @@ class RealData:
         self.plot_key(['sun4'], color=['green'], label=['-z'], name='css4', title="CSS Face -z",
                       drawstyle=['steps-post'], marker=['.'], y_name="Intensity [mA]", unit="[mA]")
 
-        self.plot_key(['energy'], color=['blue'], label=['Energy [J]'], name='energy_b', drawstyle=['steps-post'],
+        self.plot_key(['energy'], color=['blue'], label=[None], name='energy_b', drawstyle=['steps-post'],
                       marker=['.'], y_name='Energy [J]', unit='[J]', title="Rotational Energy")
 
         self.plot_key(['h_x', 'h_y', 'h_z', 'h_norm'], color=['blue', 'orange', 'green', 'black'],
@@ -243,13 +254,16 @@ class RealData:
         for i, elem in enumerate(to_plot):
             dict_temp = {}
             for key, value in kwargs.items():
-                dict_temp[key] = value[i]
+                if value is not None:
+                    dict_temp[key] = value[i]
             plt.plot(self.data['mjd'][:sample_n], self.data[elem][:sample_n], **dict_temp, alpha=0.7)
         plt.xlabel('Modified Julian Date')
         plt.ylabel(y_name)
-        handles, labels = plt.gca().get_legend_handles_labels()
+        plt.ticklabel_format(axis='y', style='sci', scilimits=(0, 0))
         plt.xticks(rotation=15)
         plt.ticklabel_format(useOffset=False)
+
+        handles, labels = plt.gca().get_legend_handles_labels()
         plt.tight_layout()
         fig.legend(handles, labels, loc='center left', bbox_to_anchor=(0.85, 0.5), frameon=True)
         plt.subplots_adjust(right=0.84)
@@ -506,6 +520,33 @@ class RealData:
         fig.savefig(VIDEO_FOLDER + "results/" + "dot_pitch_roll_lvlh.png")
         plt.close("all")
 
+        if os.path.exists(self.folder_path + "/" + f"{name_}_synth_vec.pkl"):
+            with open(self.folder_path + "/" + f"{name_}_synth_vec.pkl", 'rb') as fp:
+                channels_video = pickle.load(fp)
+
+            fig = plt.figure()
+            plt.title("Earth center diection - BF")
+            plt.ylabel("Unit vector")
+            plt.xlabel("MJD")
+            plt.plot(np.array(data_video['MJD'] - data_video['MJD'][0]) * 86400, data_video[['e_b_x', 'e_b_y', 'e_b_z']], '.', label=r'Determination')
+            plt.plot((channels_video['MJD'] - channels_video['MJD'][0]) * 86400, channels_video['earth'], label='True')
+            plt.legend()
+            plt.grid()
+            fig.savefig(VIDEO_FOLDER + "results/" + "vec_earth_b_comp.png")
+            plt.show()
+
+            fig = plt.figure()
+            plt.title("Sun center direction - BF")
+            plt.ylabel("Unit vector")
+            plt.xlabel("MJD")
+            plt.plot(np.array(data_video['MJD'] - data_video['MJD'][0]) * 86400,
+                     data_video[['s_b_x', 's_b_y', 's_b_z']], '.', label=r'Determination')
+            plt.plot((channels_video['MJD'] - channels_video['MJD'][0]) * 86400, channels_video['sun'], label='True')
+            plt.legend()
+            plt.grid()
+            fig.savefig(VIDEO_FOLDER + "results/" + "vec_sun_b_comp.png")
+            plt.show()
+
     def plot_windows(self, VIDEO_FOLDER):
         fig, ax = plt.subplots()
         # add rectangle to plot
@@ -526,7 +567,37 @@ class RealData:
         plt.xlabel("MJD")
         plt.legend()
         fig.savefig(VIDEO_FOLDER + "results/" + "wind_data.png")
-        plt.show()
+        plt.close()
+
+    def plot_gt_full_videos(self, folder_name, channels, channels_video_list):
+        fig, ax = plt.subplots()
+        lon = channels['lonlat'][:, 0]
+        lat = channels['lonlat'][:, 1]
+
+        fig = plt.figure(figsize=(12, 8))
+        ax = plt.axes(projection=ccrs.PlateCarree())
+        ax.stock_img()
+        gl = ax.gridlines(draw_labels=True, linewidth=1, color='gray', linestyle='--')
+        gl.top_labels = False
+        gl.right_labels = False
+        gl.xformatter = LongitudeFormatter()
+        gl.yformatter = LatitudeFormatter()
+
+        ax.add_feature(cfeature.COASTLINE, linewidth=1)
+        ax.add_feature(cfeature.BORDERS, linewidth=1)
+        # ax.plot(lon, lat, linestyle='-', color='r', transform=ccrs.Geodetic())
+        plt.title('Groundtrack', pad=20, fontsize=12, color='black')
+        ax.plot(lon, lat, color='blue', transform=ccrs.Geodetic())
+
+        for key, item in channels_video_list.items():
+            lon = item["lonlat"][:, 0]
+            lat = item["lonlat"][:, 1]
+            ax.scatter(lon, lat, color='red', s=10, transform=ccrs.Geodetic())
+
+        plt.tight_layout()
+        fig.savefig(folder_name, dpi=300)
+        plt.close(fig)
+
 
     def create_sim_data(self, channels):
         q_i2b = [Quaternions(q_) for q_ in channels['q_i2b']]
@@ -636,6 +707,77 @@ class RealData:
         self.data['acc_x'] *= np.deg2rad(1)
         self.data['acc_y'] *= np.deg2rad(1)
         self.data['acc_z'] *= np.deg2rad(1)
+
+    def create_sim_video(self, channels: dict, video_names: list[str], video_last_frame_date: list[str], fps: int) -> None:
+        # camera and frames
+        timestamp_list = [datetime.datetime.strptime(video_last_frame, '%Y/%m/%d %H:%M:%S').replace(tzinfo=datetime.timezone.utc).timestamp() for video_last_frame in video_last_frame_date]
+        tim_sec_list = timestamp_to_julian(np.array(timestamp_list)) - _MJD_1858
+
+        cameras = [CamSensor(r_c2b=ROT_CAM2BODY, add_filter=False, debug=False, target_resolution=(640, 480)) for _ in range(len(tim_sec_list))]
+
+        earth_pos = - np.array(channels['sat_pos_i'])
+        earth_vel = np.array(channels['sat_vel_i'])
+        sun_pos_sc = np.array(channels['sun_sc_i'])
+
+        q_i2b = self.data[['q_i2b_x', 'q_i2b_y', 'q_i2b_z', 'q_i2b_r']]
+        time_mjd = self.data['mjd']
+
+        # interpolation
+        qs = np.array(q_i2b)
+        mjd = time_mjd.to_numpy()
+
+        t_sec = (mjd - mjd[0]) * 86400.0  # seconds since first sample
+        key_rots = Rotation.from_quat(qs)
+        slerp = Slerp(t_sec, key_rots)  # one object covers the entire span
+
+        dt = 1.0 / fps
+        tim_sec_list -= mjd[0]
+        tim_sec_list *= 86400
+        tim_sec_list -= SIM_VIDEO_DURATION
+
+        for i, cam in enumerate(cameras):
+            if not os.path.exists(self.folder_path + f"{video_names[i].split('.')[0]}.avi"):
+                t_new = np.arange(tim_sec_list[i], tim_sec_list[i] + SIM_VIDEO_DURATION, dt)
+                interp_rots = slerp(t_new)  # vectorised evaluation
+                q_new = interp_rots.as_quat()  # still (x,y,z,w)
+                earth_b_vec = np.zeros((len(q_new), 3))
+                sun_b_vec = np.zeros((len(q_new), 3))
+
+                plt.figure()
+                plt.title("Quaternion interpolation")
+                plt.plot(t_new, q_new, label='Interpolation')
+                mask = np.logical_and(t_sec >= tim_sec_list[i], t_sec <= tim_sec_list[i] + SIM_VIDEO_DURATION)
+                plt.plot(t_sec[mask], qs[mask], 'o', label='Quaternion')
+                plt.grid()
+                plt.legend()
+                plt.show()
+
+                video_salida = cv2.VideoWriter(self.folder_path + f"{video_names[i].split('.')[0]}.avi", fourcc,
+                                               fps, (640, 480)) # frame_width, frame_height
+                idx = np.argmin(np.abs(t_sec - tim_sec_list[i]))
+                earth_pos_i = earth_pos[idx]
+                earth_vel_i = earth_vel[idx]
+                sun_pos_sc_i = sun_pos_sc[idx]
+
+                j = 0
+                for q_ in tqdm(q_new, desc="Creating video ...", total=len(q_new)):
+                    earth_pos_b = Quaternions(q_).frame_conv(earth_pos_i)
+                    sun_pos_sc_b = Quaternions(q_).frame_conv(sun_pos_sc_i)
+
+                    earth_b_vec[j] = earth_pos_b / np.linalg.norm(earth_pos_b)
+                    sun_b_vec[j] = sun_pos_sc_b / np.linalg.norm(sun_pos_sc_b)
+
+                    cam.compute_picture(q_, earth_pos_b, earth_vel_i, sun_pos_sc_b)
+                    frame = (cam.current_imagen * 255).astype(np.uint8)
+
+                    frame = np.repeat(frame[:, :, np.newaxis], 3, axis=2)
+                    video_salida.write(frame)
+                    j += 1
+                video_salida.release()
+                data_ref_video = {'MJD': t_new/86400 + mjd[0], 'earth': earth_b_vec, 'sun': sun_b_vec}
+                with open(self.folder_path + f"{video_names[i].split('.')[0]}_synth_vec.pkl", 'wb') as vec_file:
+                    pickle.dump(data_ref_video, vec_file)
+
 
 def module_exception_log(method, *args, **kwargs):
     """ Catch and log exceptions to do not crash the GUI"""

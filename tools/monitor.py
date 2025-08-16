@@ -40,7 +40,7 @@ class Monitor:
                               'color': color}
 
     def plot(self, x_dataset, y_dataset, xname=None, yname=None, title=None, step=False, scale=1.0, fft=False, ls='-',
-             legend_list=None):
+             legend_list=None, log_scale=False):
         if fft:
             dataset = self.fft_dataset
         else:
@@ -74,7 +74,7 @@ class Monitor:
                     plt.plot(x, y * scale, 'o-', label=yset, lw=0.7)
                 i += 1
 
-        if y_dataset == 'p_cov':
+        if y_dataset == 'p_cov' or log_scale:
             plt.yscale('log')
         if legend_list is not None:
             plt.legend(legend_list)

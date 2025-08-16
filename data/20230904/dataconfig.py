@@ -15,7 +15,7 @@ IMAGEN_DATA = None
 # data wind time
 WINDOW_TIME = {'Start': '2023/09/04 14:48:23',
                'Stop': '2023/09/04 16:22:40',
-               'STEP': 0.5,
+               'STEP': 1.0,
                'FLAG': True}  # if true use the manual time, else use the gyro data time
 TIME_FORMAT = "%Y/%m/%d %H:%M:%S"
 

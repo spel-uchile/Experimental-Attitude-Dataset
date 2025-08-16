@@ -7,23 +7,23 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pickle
 import datetime
-import sys
 import os
 from tqdm import tqdm
 import pandas as pd
 import cv2
+import importlib.util
+import matplotlib as mpl
 
 from src.kalman_filter.ekf_multy import MEKF
 from src.kalman_filter.ekf_mag_calibration import MagUKF
 from src.data_process import RealData
 from src.dynamics.quaternion import Quaternions
-from src.dynamics.dynamics_kinematics import Dynamics, calc_quaternion, calc_omega_b, shadow_zone, _MJD_1858
+from src.dynamics.dynamics_kinematics import Dynamics, calc_quaternion, calc_omega_b, shadow_zone, _MJD_1858, RAD2DEG
 from tools.get_video_frame import save_frame
 from tools.get_point_vector_from_picture import get_vector_v2
 from tools.monitor import Monitor
-from tools.mathtools import julian_to_datetime, timestamp_to_julian
-import importlib.util
-import matplotlib as mpl
+from tools.camera_sensor import CamSensor
+from tools.mathtools import julian_to_datetime, timestamp_to_julian, get_lvlh2b
 
 mpl.rcParams['font.size'] = 12
 # mpl.rcParams['font.family'] = 'Arial'   # Set the default font family
@@ -31,8 +31,8 @@ mpl.rcParams['font.size'] = 12
 # CONFIG
 # PROJECT_FOLDER = "./data/20240804/"
 # PROJECT_FOLDER = "./data/M-20230824/"
-PROJECT_FOLDER = "./data/20230904/"
-# PROJECT_FOLDER = "./data/SimulationExample/"
+# PROJECT_FOLDER = "./data/20230904/"
+PROJECT_FOLDER = "./data/SimulationExample/"
 
 PROJECT_FOLDER = os.path.abspath(PROJECT_FOLDER) + "/"
 module_name = "dataconfig"
@@ -57,21 +57,21 @@ if "SIMULATION" in list(myconfig.__dict__):
     SIMULATION = myconfig.SIMULATION
 else:
     SIMULATION = False
-VIDEO_FPS = 30.0
+VIDEO_FPS = 30
 VIDEO_DT = 1 / VIDEO_FPS
 if "VIDEO_FPS" in list(myconfig.__dict__):
     VIDEO_FPS = float(myconfig.VIDEO_FPS)
     VIDEO_DT = 1 / VIDEO_FPS
 
 # samples. None to use all the samples.
-MAX_SAMPLES = None
+MAX_SAMPLES = 600
 #================================================#
 FORCE_CALCULATION = myconfig.FORCE_CALCULATION
 FORCE_ESTIMATION = True
 #================================================#
 
 # long time prediction
-pred_step_sec = 60
+pred_step_sec = 5
 
 if __name__ == '__main__':
     # LOAD LAST RESULT ------------------------------------------------------------------------------------------------
@@ -88,7 +88,7 @@ if __name__ == '__main__':
     # sensors.set_gyro_bias(-3.846, 0.1717, -0.6937, unit='deg')
     sensors.create_datetime_from_timestamp(TIME_FORMAT)
     # INERTIA definition
-    inertia = np.array([37540.678, 38550.678, 6873.717, -0.0, -0.0, 0.0]) * 1e-6
+    inertia = np.array([37540.678, 38550.678, 6873.717, -100.0, -50.0, 50.0]) * 1e-6
     # inertia = sensors.estimate_inertia_matrix(guess=inertia)
     sensors.set_inertia(inertia)
     # show window time
@@ -125,10 +125,13 @@ if __name__ == '__main__':
             pickle.dump(channels, file_)
 
     if SIMULATION:
+        # Create synthetic data in sensor
         dynamic_orbital.set_inertia(sensors.sc_inertia)
         if not os.path.exists(PROJECT_FOLDER + OBC_DATA):
-            dynamic_orbital.update_attitude(np.array([0, 1, 1, 0]) / np.sqrt(2), np.array([-0.01, -20 * np.deg2rad(1), 0.01]))
+            dynamic_orbital.update_attitude(np.array([0, 1, 1, 0]) / np.sqrt(2),
+                                            np.array([-30 * np.deg2rad(1), -20 * np.deg2rad(1), 0.1]))
             sensors.create_sim_data(channels)
+        sensors.create_sim_video(channels, VIDEO_DATA, VIDEO_TIME_LAST_FRAME, VIDEO_FPS)
 
     dynamic_orbital.plot_gt(PROJECT_FOLDER + 'results/gt')
     dynamic_orbital.plot_mag(PROJECT_FOLDER + 'results/mag_model_igrf13')
@@ -137,7 +140,6 @@ if __name__ == '__main__':
 
     # sensors.data['is_dark'] = channels['is_dark']
     sensors.plot_main_data(SIMULATION)
-    exit()
     # calibrate gyro
     # pcov_gyro = sensors.calibrate_gyro()
     # print(pcov_gyro)
@@ -166,8 +168,10 @@ if __name__ == '__main__':
         for data_frame, time_frame in zip(VIDEO_DATA, VIDEO_TIME_LAST_FRAME):
             frame_shape = save_frame(PROJECT_FOLDER, data_frame, time_frame)
 
+    data_video_list = {}
     if GET_VECTOR_FROM_PICTURE:
-        data_video_list = {}
+        focal_length = CamSensor.focal_length
+
         channels_video_list = {}
         for data_frame in VIDEO_DATA:
             VIDEO_FOLDER = PROJECT_FOLDER + data_frame.split('.')[0] + "/"
@@ -183,20 +187,30 @@ if __name__ == '__main__':
                 fourcc = cv2.VideoWriter_fourcc(*'mp4v')
                 video_salida = cv2.VideoWriter(VIDEO_FOLDER + "results/" + f"att_process_lvlh_{vide_name}.avi", fourcc, 10.0,
                                                (frame_shape[1], frame_shape[0]))
-                rot_info = {'MJD':[], 'pitch': [], 'roll': [], 'e_b_x': [], 'e_b_y': [], 'e_b_z': [], 'timestamp': []}
+                rot_info = {'MJD':[], 'pitch': [], 'roll': [], 'e_b_x': [], 'e_b_y': [], 'e_b_z': [], 's_b_x': [], 's_b_y': [], 's_b_z': [], 'timestamp': []}
                 frame_correction_time = 0.5
-                for filename, ts_i in datalist.values:
+
+                pixel_size_width = CamSensor.sensor_width_v / frame_shape[0]
+                pixel_size_height = CamSensor.sensor_width_h / frame_shape[1]
+                # 22 +36 + 15+26+18
+                for filename, ts_i in tqdm(datalist.values, desc=f"Computing vector from video {vide_name}... ",
+                                           total=len(datalist.values)):
                     #1693838944.0
                     #1693838934.3
-                    height = dynamic_orbital.get_altitude(ts_i)
-                    edge_, img_cv2_, p_, r_, e_b_ = get_vector_v2(VIDEO_FOLDER + "/frames/" + filename, height)
+                    height_e = dynamic_orbital.get_altitude(ts_i)
+                    height_sun = dynamic_orbital.get_distance_sun(ts_i)
+                    edge_, img_cv2_, p_, r_, e_b_ = get_vector_v2(VIDEO_FOLDER + "/frames/" + filename, height_e,
+                                                                  height_sun, pixel_size_height, pixel_size_width, focal_length)
                     rot_info['pitch'].append(p_)
                     rot_info['roll'].append(r_)
                     rot_info['timestamp'].append(ts_i)
                     rot_info['MJD'].append(timestamp_to_julian(ts_i - frame_correction_time) - _MJD_1858)
-                    rot_info['e_b_x'].append(e_b_[0])
-                    rot_info['e_b_y'].append(e_b_[1])
-                    rot_info['e_b_z'].append(e_b_[2])
+                    rot_info['e_b_x'].append(e_b_['Earth_c'][0])
+                    rot_info['e_b_y'].append(e_b_['Earth_c'][1])
+                    rot_info['e_b_z'].append(e_b_['Earth_c'][2])
+                    rot_info['s_b_x'].append(e_b_['Sun_c'][0])
+                    rot_info['s_b_y'].append(e_b_['Sun_c'][1])
+                    rot_info['s_b_z'].append(e_b_['Sun_c'][2])
                     if img_cv2_ is not None:
                         video_salida.write(img_cv2_)
                         print(f" - filename {filename} added")
@@ -229,9 +243,10 @@ if __name__ == '__main__':
             dynamic_video.plot_sun_sc(VIDEO_FOLDER + "results/" + 'sun_pos_from_sc_video')
             dynamic_video.plot_earth_vector(VIDEO_FOLDER + "results/", earth_b_camera)
             # earth_point_inertial = -dynamic_video.get_unit_vector("sat_pos_i")
-
             sensors.plot_video_data(data_video, vide_name, VIDEO_FOLDER)
             plt.close("all")
+
+        sensors.plot_gt_full_videos(PROJECT_FOLDER + "/results/" + 'gt_plus_videos.png', channels, channels_video_list)
         sensors.plot_windows(PROJECT_FOLDER)
 
 
@@ -262,13 +277,14 @@ if __name__ == '__main__':
     prediction_dict = {'q_i2b_pred': [],
                        'omega_b_pred': [],
                        'time_pred': [],}
-
+    aux_data = {'q_lvlh2b': [],
+                'ypr_lvlh2b': [],}
     if not os.path.exists(PROJECT_FOLDER + "estimation_results.pkl") or FORCE_ESTIMATION:
         # MEKF
         P = np.diag([1.0, 1.0, 1.0, 1.0, 1, 1]) * 1e-1
         ekf_model = MEKF(inertia, P=P, Q=np.zeros((6, 6)), R=np.zeros((3, 3)))
         ekf_model.sigma_bias = 1e-3 # gyro noise standard deviation [rad/s]
-        ekf_model.sigma_omega = 1e-4 # gyro random walk standard deviation [rad/s*s^0.5]
+        ekf_model.sigma_omega = 1e-3 # gyro random walk standard deviation [rad/s*s^0.5]
         ekf_model.current_bias = np.array([0.0, 0.0, 0])
 
         q_i2b = np.array([0, 0, 0, 1])
@@ -285,12 +301,18 @@ if __name__ == '__main__':
         moon_sc_b = [moon_b]
         t0 = channels['full_time'][0]
         ekf_sensors_step = 0.1
+        flag_css = False
+
+        q_lvlhl_, ypr_lvlh_ = get_lvlh2b(channels['sat_pos_i'][0], channels['sat_vel_i'][0], q_i2b)
+        aux_data['q_lvlh2b'].append(q_lvlhl_)
+        aux_data['ypr_lvlh2b'].append(ypr_lvlh_)
 
         for ch_idx, t_jd in tqdm(enumerate(channels['full_time'][1:MAX_SAMPLES]), total=MAX_SAMPLES - 1, desc="Main loop Estimation"):
             ch_idx += 1
             mag_ref_ = channels['mag_i'][ch_idx]
             sun_sc_i_ = channels['sun_sc_i'][ch_idx]
             sat_pos_i_ = channels['sat_pos_i'][ch_idx]
+            sat_vel_i_ = channels['sat_vel_i'][ch_idx]
             sun_pos_i_ = channels['sun_i'][ch_idx]
             moon_pos_i_ = channels['moon_sc_i'][ch_idx]
             body_vec_ = sensors.data[['mag_x', 'mag_y', 'mag_z']].values[ch_idx]
@@ -326,17 +348,25 @@ if __name__ == '__main__':
             # css
             css_est = np.zeros(3)
             is_dark = shadow_zone(sat_pos_i_, sun_pos_i_)
-            if not is_dark:
+            error_mag = np.linalg.norm(mag_est - body_vec_)
+            if not is_dark and error_mag < 10 or flag_css: # mG
                 css_3_[css_3_ < 50] = 0.0
-                css_est = ekf_model.inject_vector(css_3_, sun_sc_i_, gain=-sensors.I_max * np.eye(3), sigma2=50, sensor='css')
+                css_est = ekf_model.inject_vector(css_3_, sun_sc_i_, gain=-sensors.I_max * np.eye(3), sigma2=1 ** 2, sensor='css')
+                flag_css = True
+                if error_mag > 100:
+                    flag_css = False
             ekf_model.save_vector(name='css_est', vector=css_est)
             ekf_model.save_vector(name='mag_est', vector=mag_est)
             ekf_model.save_vector(name='sun_b_est', vector=Quaternions(ekf_model.current_quaternion).frame_conv(sun_sc_i_))
             ekf_model.reset_state()
             moon_sc_b.append(Quaternions(ekf_model.current_quaternion).frame_conv(moon_pos_i_))
             ekf_model.set_gyro_measure(omega_gyro_)
+            q_lvlh2b, ypr_lvlh2b = get_lvlh2b(sat_pos_i_, sat_vel_i_, ekf_model.current_quaternion)
+            aux_data['q_lvlh2b'].append(q_lvlh2b)
+            aux_data['ypr_lvlh2b'].append(ypr_lvlh2b)
 
-        ekf_channels = {**prediction_dict, **ekf_model.historical}
+
+        ekf_channels = {**prediction_dict, **ekf_model.historical, **aux_data}
         with open(PROJECT_FOLDER + 'estimation_results.pkl', 'wb') as file_:
             pickle.dump(ekf_channels, file_)
 
@@ -373,7 +403,7 @@ if __name__ == '__main__':
     name_lists = ['x', 'y', 'z']
     fig = plt.figure()
     plt.title("Magnetic field estimation error")
-    plt.plot(error_mag, '.-', alpha=0.7)
+    plt.plot(np.abs(error_mag), '.-', alpha=0.7)
     plt.ylabel("Magnetic field [mG]")
     plt.xlabel("Steps [s]")
     plt.grid()
@@ -385,6 +415,7 @@ if __name__ == '__main__':
     plt.xticks(rotation=15)
     plt.ticklabel_format(useOffset=False)
     plt.tight_layout()
+    plt.yscale('log')
     fig.savefig(PROJECT_FOLDER + "results/" + "error_mag_est.png")
 
     fig = plt.figure()
@@ -451,10 +482,32 @@ if __name__ == '__main__':
     monitor.plot(x_dataset='mjd', y_dataset='p_cov', xname="MJD", yname="Diagonal Covariance",
                  title="State error covariance matrix", legend_list=[r"$\delta \theta_x$", r"$\delta \theta_y$",
                                                                      r"$\delta \theta_z$", r"$\Delta b_x$", r"$\Delta b_y$", r"$\Delta b_z$"])
+    monitor.plot(x_dataset='mjd', y_dataset='q_lvlh2b', xname="MJD", yname="Quaternion LVLH2b",
+                 title="Quaternion estimation LVLH", legend_list=["x", "y", "z", "s"])
+    monitor.plot(x_dataset='mjd', y_dataset='ypr_lvlh2b', xname="MJD", yname="YPR LVLH2b",
+                 title="Yaw-Pitch-Roll estimation LVLH", legend_list=["yaw", "pitch", "roll"])
 
     if SIMULATION:
-        monitor.plot(x_dataset='mjd', y_dataset='error_q_true')
+        monitor.plot(x_dataset='mjd', y_dataset='error_q_true', log_scale=True)
         monitor.plot(x_dataset='mjd', y_dataset='error_w_true')
+
+    if GET_VECTOR_FROM_PICTURE:
+        fig_picture, axes = plt.subplots(nrows=2, ncols=1, sharex=True)
+        axes[0].grid()
+        axes[0].set_xlabel("MJD")
+        axes[1].grid()
+        axes[1].set_xlabel("MJD")
+        axes[0].set_ylabel("Roll [deg]")
+        axes[1].set_ylabel("Pitch [deg]")
+        for key, data in data_video_list.items():
+            axes[0].plot(data['MJD'], data['roll'] * RAD2DEG, 'o', label="Video {}".format(key))
+            axes[1].plot(data['MJD'], data['pitch'] * RAD2DEG, 'o', label="Video {}".format(key))
+        axes[0].plot(channels['mjd'], np.array(channels['ypr_lvlh2b'])[:, 2] * RAD2DEG, label="EKF")
+        axes[1].plot(channels['mjd'], np.array(channels['ypr_lvlh2b'])[:, 1] * RAD2DEG, label="EKF")
+        axes[0].legend()
+        axes[1].legend()
+        plt.xlim(np.min(channels['mjd']), np.max(channels['mjd']))
+        fig_picture.savefig(PROJECT_FOLDER + "results/" + f"ypr_estimation_lvlh.png")
 
     fig, axes = plt.subplots(nrows=3, ncols=1, sharex=True)
     fig.suptitle("Magnetometer estimation @ BodyFrame")
@@ -475,6 +528,8 @@ if __name__ == '__main__':
     axes[2].set_xlabel("MJD")
     plt.tight_layout()
     fig.savefig(PROJECT_FOLDER + "results/" + "coarse_sun_sensor_estimation.png")
+
+    plt.show()
     plt.close("all")
     #monitor.show_monitor()
     #monitor.plot3d()
