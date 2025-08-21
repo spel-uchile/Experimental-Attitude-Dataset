@@ -10,6 +10,7 @@ OBC_DATA = "imu-sim.xlsx"
 VIDEO_DATA = ["sim-att1.avi", "sim-att2.avi", "sim-att3.avi"]  # reference unit time
 IMAGEN_DATA = None
 VIDEO_TIME_LAST_FRAME = ["2023/08/24 14:05:00", "2023/08/24 14:15:00", "2023/08/24 15:50:00"]
+VIDEO_CORRECTION_TIME = 0.0
 OBC_DATA_STEP = 1
 # data wind time 15:40
 WINDOW_TIME = {'Start': '2023/08/24 14:00:00',

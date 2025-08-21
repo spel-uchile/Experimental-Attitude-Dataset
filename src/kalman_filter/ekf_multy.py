@@ -9,6 +9,32 @@ from tools.mathtools import *
 from .ekf import EKF
 
 
+def rodrigues_exp(omega_, dt_):
+    om_skew = skew(omega_)
+    w_norm = np.linalg.norm(omega_)
+    theta = w_norm * dt_  # ||ω||*dt
+    if w_norm < 1e-8:
+        return np.eye(3) - om_skew * dt_ - 0.5 * om_skew @ om_skew * dt_ ** 2
+
+    A = np.sin(theta) / w_norm
+    B = (1 - np.cos(theta))/(w_norm ** 2)
+    return np.eye(3) - A * om_skew + B * om_skew @ om_skew
+
+
+def left_jacobian_SO3(omega_, dt_):
+    # J_l(ωdt) = -I3 * dt + (1-cosθ)/ω^2 [ω]_x + (θ - sinθ)/ω^3 [ω]_x^2
+    w_norm = np.linalg.norm(omega_)
+    theta = w_norm * dt_  # ||ω||*dt
+    om_skew = skew(omega_)
+    if w_norm < 1e-8:
+        return np.eye(3) - 0.5*om_skew + (1/6.0) * (om_skew @ om_skew)
+
+    A = (1 - np.cos(theta))/(w_norm**2)
+    B = (theta - np.sin(theta))/(w_norm**3)
+
+    return - np.eye(3) * dt_ + A * om_skew - B * (om_skew @ om_skew)
+
+
 class MEKF(EKF):
     # https://ntrs.nasa.gov/api/citations/19960035754/downloads/19960035754.pdf
     """
@@ -23,8 +49,11 @@ class MEKF(EKF):
         self.current_bias = np.zeros(3)
         self.sigma_omega = 0
         self.sigma_bias = 0
+        self.tau = 1000
+        self.gamma = 0
+        self.bias_model = None#"GM"
         self.historical = {'mjd_ekf':[], 'q_est': [], 'b_est': [np.zeros(3)], 'mag_est': [], 'omega_est': [],
-                           'p_cov': [np.diag(self.covariance_P)], 'css_est': [], 'sun_b_est': []}
+                           'p_cov': [np.diag(self.covariance_P)], 'css_est': [], 'sun_b_est': [], 'earth_b_est': []}
 
     def add_reference_vector(self, vector):
         self.reference_vector = vector
@@ -54,16 +83,78 @@ class MEKF(EKF):
         f_x = np.zeros((6, 6))
         f_x[:3, :3] = -skew(omega)
         f_x[:3, 3:] = -np.identity(3)
+
         self.kf_Q[:3, :3] = np.identity(3) * (self.sigma_omega ** 2 * step + 1 / 3 * self.sigma_bias ** 2 * step ** 3)
         self.kf_Q[3:, 3:] = np.identity(3) * self.sigma_bias ** 2 * step
-        # self.kf_Q[:3, 3:] = - np.identity(3) * 0.5 * self.sigma_bias ** 2 * step ** 2
-        # self.kf_Q[3:, :3] = - np.identity(3) * 0.5 * self.sigma_bias ** 2 * step ** 2
+        self.kf_Q[:3, 3:] = - np.identity(3) * 0.5 * self.sigma_bias ** 2 * step ** 2
+        self.kf_Q[3:, :3] = - np.identity(3) * 0.5 * self.sigma_bias ** 2 * step ** 2
 
-        phi = (np.eye(6) + f_x) * step # + 0.5 * f_x @ f_x * step) * step
+        #phi = np.eye(6) + f_x * step + 0.5 * f_x @ f_x * step * step
+
+        Phi_tt = rodrigues_exp(omega, step)  # exp(-[ω]x dt)
+        # Integral de la exp para el acoplo con bias:
+        # Φ_{θb} = - ∫_0^dt exp(-[ω]x s) ds  ≈ - J_l(ωdt) * dt
+        # (identidad útil: ∫ exp(A s) ds = A^{-1}(exp(A dt)-I); en SO(3) → J_l)
+        Jl = left_jacobian_SO3(omega, step)
+        Phi_tb = Jl   # 3x3
+        Phi_bb = np.eye(3)
+
+        phi = np.block([[Phi_tt, Phi_tb], [np.zeros((3, 3)), Phi_bb]])
+
         new_p_k = phi.dot(self.covariance_P).dot(phi.T) + self.kf_Q
         return new_p_k
 
-    def propagate_cov_P(self, step, omega):
+    def propagate_cov_P(self, dt, omega_eff):
+        # usa ω - b̂
+        Om = skew(omega_eff)
+        Om_dt = Om * dt
+
+        # Bloques de Phi
+        Phi_tt = rodrigues_exp(-Om_dt)  # exp(-[ω]x dt)
+        # Integral de la exp para el acoplo con bias:
+        # Φ_{θb} = - ∫_0^dt exp(-[ω]x s) ds  ≈ - J_l(ωdt) * dt
+        # (identidad útil: ∫ exp(A s) ds = A^{-1}(exp(A dt)-I); en SO(3) → J_l)
+        Jl = left_jacobian_SO3(Om_dt)
+        Phi_tb = - Jl * dt  # 3x3
+        if self.bias_model == "GM":
+            Phi_bb = np.exp(-dt / self.tau) * np.eye(3)
+        else:  # RW
+            Phi_bb = np.eye(3)
+
+        Phi = np.block([[Phi_tt, Phi_tb], [np.zeros((3, 3)), Phi_bb]])
+
+        # --- Ruido de proceso discreto ---
+        # Densidades (rad^2/s^3 para bias RW? usa consistencia):
+        #   Sg: densidad espectral de ruido blanco del gyro (rad^2/s)
+        #   Sb: densidad del proceso de bias (RW: rad^2/s, GM: σ_b^2 * 2/τ en continuo)
+        Sg = self.sigma_omega ** 2  # p.ej. (ARW)^2 en rad^2/s
+        if self.bias_model == "GM":
+            Qb = (self.sigma_bias ** 2) * (1 - np.exp(-2 * dt / self.tau)) * np.eye(3)
+        else:  # RW
+            Qb = (self.sigma_bias ** 2) * dt * np.eye(3)
+
+        # Mapeo de ruidos al estado de error: δθ recibe -n_ω; δb recibe n_b
+        G = np.block([
+            [-np.eye(3), np.zeros((3, 3))],
+            [np.zeros((3, 3)), np.eye(3)]
+        ])
+        # Discreto del canal gyro: var por paso para n_ω (rad^2/s^2):
+        Qg = (Sg / dt) * np.eye(3)
+
+        # (Opcional) ruido extra de “jerk” de actitud para absorber aceleraciones intra-muestra
+        Qextra = (self.gamma * dt ** 3) * np.eye(3)  # gamma ~ Var(|dot(ω)|)
+        Qd_block = np.block([
+            [Qg + Qextra, np.zeros((3, 3))],
+            [np.zeros((3, 3)), Qb]
+        ])
+
+        # Propagación correcta
+        P = self.covariance_P
+        P = Phi @ P @ Phi.T + G @ Qd_block @ G.T
+        self.covariance_P = P
+        return P
+
+    def propagate_cov_P_old(self, step, omega):
         F_x = np.zeros((6, 6))
         F_x[:3, :3] = self.get_discrete_theta(step, omega)
         F_x[:3, 3:] = self.get_discrete_psi(step, omega)

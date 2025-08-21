@@ -6,7 +6,7 @@ email: els.obrq@gmail.com
 import numpy as np
 import datetime
 from src.dynamics.quaternion import Quaternions
-
+from pyquaternion import Quaternion as PyQuaternion
 
 twopi = 2.0 * np.pi
 deg2rad = np.pi / 180.0
@@ -290,8 +290,11 @@ def trace_method(matrix):
 
 def get_lvlh2b(sat_pos_, sat_vel_, q_i2b_):
     matrix_i2lvlh = compute_i2lvlh(sat_pos_, sat_vel_)
+    dcm_i2b = Quaternions(q_i2b_).todcm()
+
+    # q_ = PyQuaternion(matrix=matrix_i2lvlh)
     q_ = trace_method(matrix_i2lvlh)
-    current_quaternion_lvlh2b = Quaternions(q_i2b_) * Quaternions(Quaternions(q_).conjugate())
+    current_quaternion_lvlh2b = Quaternions(Quaternions(q_).conjugate()) * Quaternions(q_i2b_)
     return current_quaternion_lvlh2b(), current_quaternion_lvlh2b.toypr()
 
 def compute_i2lvlh(pos_i: np.ndarray, vel_i: np.ndarray):
@@ -314,3 +317,5 @@ if __name__ == '__main__':
     print(julian_to_datetime(JD_2000))
 
     print(jd_to_decyear(JD_2000 + 230), " - -", jd_to_decyear_old(JD_2000 + 230))
+
+

@@ -100,15 +100,21 @@ class MagUKF():
         self.historical['P'].append(np.diag(self.pCov_x.copy()))
         self.historical['eigP'].append(np.sqrt(np.linalg.eigvals(self.pCov_x)))
 
-    def calibrate(self, mag_i, mag_sensors):
+    def calibrate(self, mag_i, mag_sensors, mag_sig=2.8):
         _new_sensor_ukf = []
         stop_k = 0
+        if len(mag_i) == 1:
+            self.run(mag_sensors[0], mag_i[0], mag_sig ** 2)#, 20000, 100)
+            _bias_, _D_scale = self.get_calibration()
+            return (np.eye(3) + _D_scale) @ mag_sensors[0] - _bias_
+
         for mag_i_, mag_b_ in tqdm(zip(mag_i, mag_sensors), total=len(mag_i), desc="UKF Calibration"):
             self.save()
-            self.run(mag_b_, mag_i_, 2.8 ** 2)#, 5000, 100)
+            self.run(mag_b_, mag_i_, mag_sig ** 2)#, 20e3, 100)
             _bias_, _D_scale = self.get_calibration()
             _new_sensor_ukf.append((np.eye(3) + _D_scale) @ mag_b_ - _bias_)
             stop_k += 1
+
         return np.asarray(_new_sensor_ukf)
 
     def run(self, sensor_, reference_, cov_sensor_, error_up=None, error_down=None):
@@ -155,7 +161,7 @@ class MagUKF():
         if len(self.historical['error']) > 0 and error_up is not None and error_down is not None:
             if abs(error_) > error_up and not self.flag:
                 # self.pCov_x[:3, :3] = self.pCov_zero[:3, :3]
-                self.pCov_x = self.pCov_zero
+                self.pCov_x = self.pCov_x * 10
                 self.flag = True
                 print("After:", error_)
             elif abs(error_) <= error_down and self.flag:

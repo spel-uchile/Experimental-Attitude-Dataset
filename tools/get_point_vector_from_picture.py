@@ -505,7 +505,6 @@ def calc_conical_curvature(points, fl, pw, ph, shape_, h):
     center_pixel = center_pixel.astype(np.int32)
     # vector in body frame,
     e_b = ROT_CAM2BODY @ e_c
-    e_b[0] *= -1
     # Pitch and roll to rotate from LVLH to Body frame
     pitch = np.arcsin(np.clip(e_b[1], -1.0, 1.0))
     roll = -np.arctan2(e_b[0], e_b[2])
@@ -514,13 +513,13 @@ def calc_conical_curvature(points, fl, pw, ph, shape_, h):
 def get_vector_v2(file_name, height_earth, height_sun, pixel_size_height, pixel_size_width, focal_length):
     edge_ = None
     pitch_, roll_ = np.nan, np.nan
-    vectors_c = {'Earth_c': np.zeros(3), 'Sun_c': np.zeros(3)}
+    vectors_c = {'Earth_c': np.full(3, np.nan) , 'Sun_c': np.full(3, np.nan) }
     try:
         col_o = Image.open(file_name)
         img_cv2_ = np.asarray(col_o)
         gray = np.asarray(col_o.convert('L'))
         if np.sum(gray) / 255 < 255 * 0.2: # min area sun
-            return edge_, img_cv2_, pitch_, roll_, vectors_c
+            return edge_, img_cv2_[..., ::-1], pitch_, roll_, vectors_c
         t1 = time.time()
         # get earth and sun
         bw_bodies = get_body(col_o.copy(), file_name, show=False)
@@ -538,10 +537,10 @@ def get_vector_v2(file_name, height_earth, height_sun, pixel_size_height, pixel_
         last_tag = []
         for radii, pl, bw_temp, center_aprox_, circ_, arc_cov_ in zip(radius_cv2, point_list_, bw_bodies, center_2d_index_list,
                                                      metrics_list_['circularity'], metrics_list_['arc_cov']):
-            if (circ_ < 0.1 and arc_cov_ < 3.5 and radii[0] > 0.1 * max(bw_temp.shape) and radii[0] > 2 * radii[1]) and 'earth' not in last_tag:
+            if (circ_ < 0.1 and arc_cov_ < 3.5 and 10 * max(bw_temp.shape) > radii[0] > 0.1 * max(bw_temp.shape) and radii[0] > 2 * radii[1]) and 'earth' not in last_tag:
                 height = height_earth
                 last_tag.append("earth")
-            elif (circ_ >= 0.1 or arc_cov_ > 2) and 'sun' not in last_tag and radii[0] > 2 * radii[1]:
+            elif (circ_ >= 0.1 and arc_cov_ > 2) and 'sun' not in last_tag and 2 * radii[1] < radii[0] < 10 * max(bw_temp.shape):
                 height = height_sun
                 last_tag.append("sun")
             else:
@@ -554,7 +553,7 @@ def get_vector_v2(file_name, height_earth, height_sun, pixel_size_height, pixel_
                                                                                                                                   bw_temp.shape,
                                                                                                                                   height)
             results["edge_pixels"].append(body_edge_array)
-            results["vector_c"].append(ROT_CAM2BODY @ body_vec_c)
+            results["vector_c"].append(body_vec_c)
             results["center_pixel"].append(center_pixel)
             results["pitch"].append(pitch_)
             results["roll"].append(roll_)

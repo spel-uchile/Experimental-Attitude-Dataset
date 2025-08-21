@@ -11,6 +11,7 @@ OBC_DATA_STEP = 1.0
 VIDEO_FPS = 30
 VIDEO_DATA = ["20230904-video-att6-clip.mp4", "20230904-video-att7 - clip.mp4", "20230904-video-att9-clip.mp4"]  # reference unit time
 VIDEO_TIME_LAST_FRAME = ["2023/09/04 14:49:04", "2023/09/04 16:21:21", "2023/09/04 16:22:40"]
+VIDEO_CORRECTION_TIME = 0.5
 IMAGEN_DATA = None
 # data wind time
 WINDOW_TIME = {'Start': '2023/09/04 14:48:23',

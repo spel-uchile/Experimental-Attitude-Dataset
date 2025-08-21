@@ -6,14 +6,13 @@ Date: 04-12-2022
 import time
 import matplotlib.pyplot as plt
 import numpy as np
-import pyvista as pv
-from pyquaternion import Quaternion as pyquat
-import pyvista
-import vtk
+
+RAD2DEG = 180 / np.pi
+DEG2RAD = 1 / RAD2DEG
 
 
 class Monitor:
-    def __init__(self, dataset, folder_save):
+    def __init__(self, dataset, folder_save, video_dataset: dict=None):
         self.dataset = dataset
         self.fft_dataset = {}
         self.datetime = self.dataset['DateTime']
@@ -22,6 +21,7 @@ class Monitor:
         self.sideral = None
         self.folder_save = folder_save
         self.vectors = {}
+        self.video_dataset = video_dataset
 
     def add_data(self, new_data: dict):
         self.dataset = {**self.dataset, **new_data}
@@ -97,257 +97,92 @@ class Monitor:
             self.fft_dataset[elem + '_amp'] = np.abs(w_plot)
             self.fft_dataset[elem + '_freq'] = f_plot
 
-    def plot3d(self):
-        monitor_3d = Monitor3d(self.position, self.q_i2b, self.sideral, self.datetime)
-        monitor_3d.add_vectors(self.vectors)
-        monitor_3d.plotter3d.show()
-
     @staticmethod
     def show_monitor():
         plt.show(block=False)
 
+    def plot_video_performance(self):
+        fig_picture, axes = plt.subplots(nrows=2, ncols=1, sharex=True)
+        axes[0].grid()
+        axes[0].set_xlabel("MJD")
+        axes[1].grid()
+        axes[1].set_xlabel("MJD")
+        axes[0].set_ylabel("Roll [deg]")
+        axes[1].set_ylabel("Pitch [deg]")
+        axes[0].plot(self.dataset['mjd'], np.array(self.dataset['ypr_lvlh2b'])[:, 2] * RAD2DEG, label="EKF")
+        axes[1].plot(self.dataset['mjd'], np.array(self.dataset['ypr_lvlh2b'])[:, 1] * RAD2DEG, label="EKF")
+        for key, data in self.video_dataset.items():
+            axes[0].plot(data['MJD'], data['roll'] * RAD2DEG, 'o', label="Video {}".format(key))
+            axes[1].plot(data['MJD'], data['pitch'] * RAD2DEG, 'o', label="Video {}".format(key))
+            # axes[0].set_xlim(np.min(data['MJD']), np.max(data['MJD']))
+            # axes[1].set_xlim(np.min(data['MJD']), np.max(data['MJD']))
+        axes[0].legend()
+        axes[1].legend()
+        fig_picture.savefig(self.folder_save + f"ypr_estimation_lvlh.png")
 
-class Monitor3d:
-    AUX_VECTOR = [pv.Arrow(np.zeros(3), direction=np.array([1, 0, 0]), scale=1),
-                  pv.Arrow(np.zeros(3), direction=np.array([0, 1, 0]), scale=1),
-                  pv.Arrow(np.zeros(3), direction=np.array([0, 0, 1]), scale=1)]
+        E = np.asarray(self.dataset['earth_b_est'], float)
+        if E.dtype == object: E = np.stack(E)
+        En = np.linalg.norm(E, axis=1, keepdims=True)
+        earth_unit_est = np.divide(E, En, out=np.zeros_like(E), where=En > 0)
 
-    def __init__(self, position, q_i2b, sideral, date_time):
-        self.plotter3d = pv.Plotter(shape=(1, 2))
-        self.vectors = {}
-        self.body_x_i = None
-        self.body_y_i = None
-        self.body_z_i = None
-        self.flag = False
-        self.view_worker = None
-        self.last_index_ = 0
-        self.date_time = date_time
-        self.last_pos = np.zeros(3)
-        self.last_q_i2b = pyquat(np.array([1, 0, 0, 0]))
-        self.last_sideral = 0
-        self.earth_sideral = np.asarray(sideral)
-        self.sat_pos = np.asarray(position)
-        new_q = np.asarray(q_i2b)
-        self.sat_q_i2b = np.concatenate([new_q[:, 3].reshape(-1, 1), new_q[:, :3]], axis=1)
+        S = np.asarray(self.dataset['sun_b_est'], float)
+        if S.dtype == object: S = np.stack(S)
+        Sn = np.linalg.norm(S, axis=1, keepdims=True)
+        sun_unit_est = np.divide(S, Sn, out=np.zeros_like(S), where=Sn > 0)
 
-        # earth3d = pv.Sphere(radius=re, phi_resolution=180, theta_resolution=360)
-        self.earth3d, texture = load_earth(radius=6378.137)
+        for key, data in self.video_dataset.items():
+            fig_earth_cam, axes_earth_cam = plt.subplots(figsize=(8.5, 5), nrows=1, ncols=1)
+            axes_earth_cam.grid()
+            axes_earth_cam.set_title("MEKF and Camera Earth vector estimation - BF")
+            axes_earth_cam.set_xlabel("MJD")
+            axes_earth_cam.set_ylabel("Unit vector [-]")
 
-        self.sat_model = pv.PolyData("tools/cad/basic3U.stl")
-        self.plotter3d.subplot(0, 0)
-        self.plotter3d.set_background(color='black')
-        self.plotter3d.add_mesh(self.earth3d, texture=texture)  # , color='#0C007C')
-        self.plotter3d.add_mesh(self.sat_model, color='white')
-        self.plotter3d.add_points(np.array([elem for elem in self.sat_pos]), render_points_as_spheres=True,
-                                  point_size=3, color='red')
-        self.plotter3d.add_axes()
-        self.add_eci_frame()
-        self.add_body_frame()
+            h_cx, = axes_earth_cam.plot(data['MJD'], data['e_b_x'], 'o', label=r'CAM: $e_{x,c}$')
+            h_cy, = axes_earth_cam.plot(data['MJD'], data['e_b_y'], 'o', label=r'CAM: $e_{y,c}$')
+            h_cz, = axes_earth_cam.plot(data['MJD'], data['e_b_z'], 'o', label=r'CAM: $e_{z,c}$')
 
-        # reset earth
-        self.plotter3d.subplot(0, 1)
-        self.plotter3d.add_text(self.date_time[0], font_size=15, position='lower_right', name='text', color='yellow')
-        self.plotter3d.set_background(color='black')
-        self.plotter3d.add_mesh(self.earth3d, texture=texture)  # , color='#0C007C')
-        self._last_focal = (0, 1, 0)
+            h_tx, = axes_earth_cam.plot(self.dataset['mjd'], earth_unit_est[:, 0],
+                                        label=r'MEKF: $e_{x,c}$')
+            h_ty, = axes_earth_cam.plot(self.dataset['mjd'], earth_unit_est[:, 1],
+                                        label=r'MEKF: $e_{y,c}$')
+            h_tz, = axes_earth_cam.plot(self.dataset['mjd'], earth_unit_est[:, 2],
+                                        label=r'MEKF: $e_{z,c}$')
 
-        self.plotter3d.subplot(0, 0)
-        self.earth3d.rotate_z(180, inplace=True)
-        self.update(0)
-        self.plotter3d.add_slider_widget(self.update, [0, len(self.sat_pos) - 1], value=0, title='Step', color='white')
-        self.btn = self.plotter3d.add_checkbox_button_widget(self.forward, value=False)
+            h_tx.set_color(h_cx.get_color())
+            h_ty.set_color(h_cy.get_color())
+            h_tz.set_color(h_cz.get_color())
 
-    def update_windows(self):
-        if self.flag and self.last_index_ < len(self.sat_pos) - 1:
-            self.update(self.last_index_)
-            time.sleep(1)
-            self.last_index_ += 1
+            axes_earth_cam.legend(loc='center left', bbox_to_anchor=(1.02, 0.5), borderaxespad=0.)
+            fig_earth_cam.subplots_adjust(right=0.8)
+            axes_earth_cam.set_xlim(data['MJD'].min() - 1 / 86400, data['MJD'].max() + 1 / 86400)
+            plt.xticks(rotation=15)
+            plt.ticklabel_format(useOffset=False)
+            plt.tight_layout()
+            fig_earth_cam.savefig(self.folder_save + f"{key} - cam_mekf_earth_estimation_b.png")
 
-    def add_vectors(self, vectors_list):
-        for key, item in vectors_list.items():
-            data, color = item['data'], item['color']
-            relative_to_sc = data[0]
-            relative_to_sc /= np.linalg.norm(relative_to_sc)
-            self.vectors[key] = {}
-            self.vectors[key]['data'] = data
-            self.vectors[key]['model'] = pv.Arrow(self.sat_pos[0], direction=relative_to_sc,
-                                                  scale=200)
-            self.plotter3d.subplot(0, 0)
-            self.plotter3d.add_mesh(self.vectors[key]['model'], color=color, reset_camera=False)
+        for key, data in self.video_dataset.items():
+            fig_sun_cam, axes_sun_cam = plt.subplots(figsize=(8.5, 5), nrows=1, ncols=1)
+            axes_sun_cam.grid()
+            axes_sun_cam.set_title(f"MEKF and Camera Sun vector estimation - BF")
+            axes_sun_cam.set_xlabel("MJD")
+            axes_sun_cam.set_ylabel("Unit vector [-]")
 
-    def add_body_frame(self):
-        center_ref = np.zeros(3)
-        self.plotter3d.subplot(0, 0)
-        self.body_x_i = pv.Arrow(center_ref, [1, 0, 0], scale=200)
-        self.body_y_i = pv.Arrow(center_ref, [0, 1, 0], scale=200)
-        self.body_z_i = pv.Arrow(center_ref, [0, 0, 1], scale=200)
-        self.plotter3d.add_mesh(self.body_x_i, color='red', lighting=False)
-        self.plotter3d.add_mesh(self.body_y_i, color='green', lighting=False)
-        self.plotter3d.add_mesh(self.body_z_i, color='blue', lighting=False)
+            h_cx, = axes_sun_cam.plot(data['MJD'], data['s_b_x'], 'o', label=r'CAM: $s_{x,c}$')
+            h_cy, = axes_sun_cam.plot(data['MJD'], data['s_b_y'], 'o', label=r'CAM: $s_{y,c}$')
+            h_cz, = axes_sun_cam.plot(data['MJD'], data['s_b_z'], 'o', label=r'CAM: $s_{z,c}$')
 
-    def forward(self, flag):
-        while flag:
-            if self.last_index_ < len(self.sat_pos) - 1:
-                print(self.last_index_ + 1)
-                self.update(self.last_index_ + 1)
-                time.sleep(0.2)
-            else:
-                self.last_index_ = 0
+            h_tx, = axes_sun_cam.plot(self.dataset['mjd'], sun_unit_est[:, 0], label=r'MEKF: $s_{x,c}$')
+            h_ty, = axes_sun_cam.plot(self.dataset['mjd'], sun_unit_est[:, 1], label=r'MEKF: $s_{y,c}$')
+            h_tz, = axes_sun_cam.plot(self.dataset['mjd'], sun_unit_est[:, 2], label=r'MEKF: $s_{z,c}$')
 
-    def update(self, index_):
-        index_ = int(index_)
-        # position
-        # TODO: arreglar ref de camera
-        sc_pos_i = self.sat_pos[index_]
-        relative_pos = sc_pos_i - self.last_pos
-        self.sat_model.translate(relative_pos, inplace=True)
-        # orientation
-        quaternion_tn = pyquat(self.sat_q_i2b[index_]).unit
-        inv_quaternion = self.last_q_i2b.inverse
-        d_quaternion = quaternion_tn * inv_quaternion
-        self.sat_model.rotate_vector(vector=tuple(d_quaternion.vector),
-                                     angle=d_quaternion.angle * np.rad2deg(1),
-                                     point=sc_pos_i, inplace=True)
-        self.body_x_i.translate(relative_pos, inplace=True)
-        self.body_y_i.translate(relative_pos, inplace=True)
-        self.body_z_i.translate(relative_pos, inplace=True)
-        self.body_x_i.rotate_vector(vector=tuple(d_quaternion.vector),
-                                    angle=d_quaternion.angle * np.rad2deg(1),
-                                    point=sc_pos_i, inplace=True)
-        self.body_y_i.rotate_vector(vector=tuple(d_quaternion.vector),
-                                    angle=d_quaternion.angle * np.rad2deg(1),
-                                    point=sc_pos_i, inplace=True)
-        self.body_z_i.rotate_vector(vector=tuple(d_quaternion.vector),
-                                    angle=d_quaternion.angle * np.rad2deg(1),
-                                    point=sc_pos_i, inplace=True)
+            h_tx.set_color(h_cx.get_color())
+            h_ty.set_color(h_cy.get_color())
+            h_tz.set_color(h_cz.get_color())
 
-        fv = self._last_focal
-        dir_vec = (np.mean(self.body_y_i.points, axis=0) - sc_pos_i)
-        dir_z = (np.mean(self.body_z_i.points, axis=0) - sc_pos_i)
-        dir_x = (np.mean(self.body_x_i.points, axis=0) - sc_pos_i)
-        dir_vec = 2*6700 * np.asarray(dir_vec)
-        dir_z /= np.linalg.norm(dir_z)
-        dir_x /= np.linalg.norm(dir_x)
-        print(dir_vec, d_quaternion.rotate(np.asarray(fv)))
-        self._last_focal = dir_vec
-        # self.camera_rpi.focal_point = dir_vec
-        self.plotter3d.subplot(0, 1)
-        self.plotter3d.remove_actor('text')
-        self.plotter3d.add_text(self.date_time[index_], font_size=15, name='text', color='yellow', position='lower_right')
-        self.plotter3d.camera_position = [sc_pos_i,
-                                          dir_vec,
-                                          -dir_z]
-        # self.plotter3d.camera.clipping_range = (0., 80000)
-        self.plotter3d.camera.view_angle = 60.0
-        #self.plotter3d.camera.roll = np.arccos(np.dot(-dir_z, np.array([0, -1, 0]))) * 180 / np.pi
-        # self.plotter3d.camera.up = (0, 0, 1)
-        # self.plotter3d.camera.view_angle = 48.8
-        # earth
-        sideral = self.earth_sideral[index_]
-        self.earth3d.rotate_z((sideral - self.last_sideral) * np.rad2deg(1), inplace=True)
-        # vectors
-        for key, arrow in self.vectors.items():
-            if 'mag' in key:
-                vect_pos = arrow['data'][index_]
-                last_vect_pos = arrow['data'][self.last_index_]
-            else:
-                vect_pos = arrow['data'][index_]# - sc_pos_i
-                last_vect_pos = arrow['data'][self.last_index_]
-
-            en = np.linalg.norm(vect_pos)
-            ln = np.linalg.norm(last_vect_pos)
-            rot_vec = np.cross(last_vect_pos, vect_pos) / (en * ln)
-            if np.linalg.norm(rot_vec) > 1e-9:
-                rot_vec /= np.linalg.norm(rot_vec)
-                ang_rot = np.arccos(np.dot(last_vect_pos, vect_pos) / (en * ln))
-            else:
-                rot_vec = np.array([1, 0, 0])
-                ang_rot = 0.0
-            arrow['model'].translate(relative_pos, inplace=True)
-            arrow['model'].rotate_vector(vector=rot_vec,
-                                         angle=np.rad2deg(ang_rot),
-                                         point=sc_pos_i,
-                                         inplace=True)
-        self.plotter3d.render()
-        self.plotter3d.subplot(0, 0)
-        self.plotter3d.render()
-        self.plotter3d.subplot(0, 1)
-        self.plotter3d.render()
-        self.last_sideral = sideral
-        self.last_pos = sc_pos_i
-        self.last_q_i2b = quaternion_tn
-        self.last_index_ = index_
-
-    def add_eci_frame(self):
-        scale = 1e-3
-        self.plotter3d.subplot(0, 0)
-        self.plotter3d.add_lines(np.array([[0, 0, 0], [1e7 * scale, 0, 0]]), color=[255, 0, 0], width=2,
-                                 label='X-axis')
-        self.plotter3d.add_lines(np.array([[0, 0, 0], [0, 1e7 * scale, 0]]), color=[0, 255, 0], width=2,
-                                 label='Y-axis')
-        self.plotter3d.add_lines(np.array([[0, 0, 0], [0, 0, 1e7 * scale]]), color=[0, 0, 255], width=2,
-                                 label='Z-axis')
-
-
-def load_earth(radius=1.0, lat_resolution=100, lon_resolution=200):
-    """Load the planet Earth as a textured sphere.
-
-    Parameters
-    ----------
-    radius : float, default: 1.0
-        Sphere radius.
-
-    lat_resolution : int, default: 50
-        Set the number of points in the latitude direction.
-
-    lon_resolution : int, default: 100
-        Set the number of points in the longitude direction.
-
-    Returns
-    -------
-    pyvista.PolyData
-        Earth dataset with texture.
-
-    Examples
-    --------
-    """
-    sphere = _sphere_with_texture_map(
-        radius=radius, lat_resolution=lat_resolution, lon_resolution=lon_resolution
-    )
-    sphere.translate(-np.array(sphere.center), inplace=True)
-
-    f = pyvista.read_texture("tools/img/2k_earth_daymap.jpg")
-    return sphere, f
-
-
-def _sphere_with_texture_map(radius=1.0, lat_resolution=50, lon_resolution=100):
-    """Sphere with texture coordinates.
-
-    Parameters
-    ----------
-    radius : float, default: 1.0
-        Sphere radius.
-
-    lat_resolution : int, default: 100
-        Set the number of points in the latitude direction.
-
-    lon_resolution : int, default: 100
-        Set the number of points in the longitude direction.
-
-    Returns
-    -------
-    pyvista.PolyData
-        Sphere mesh with texture coordinates.
-
-    """
-    # https://github.com/pyvista/pyvista/pull/2994#issuecomment-1200520035
-    theta, phi = np.mgrid[0: np.pi: lat_resolution * 1j, 0: 2 * np.pi: lon_resolution * 1j]
-    x = radius * np.sin(theta) * np.cos(phi)
-    y = radius * np.sin(theta) * np.sin(phi)
-    z = radius * np.cos(theta)
-    sphere = pyvista.StructuredGrid(x, y, z)
-    texture_coords = np.empty((sphere.n_points, 2))
-    texture_coords[:, 0] = phi.ravel('F') / phi.max()
-    texture_coords[:, 1] = theta[::-1, :].ravel('F') / theta.max()
-    sphere.active_t_coords = texture_coords
-    return sphere.extract_surface(pass_pointid=False, pass_cellid=False)
+            axes_sun_cam.legend(loc='center left', bbox_to_anchor=(1.02, 0.5), borderaxespad=0.)
+            fig_sun_cam.subplots_adjust(right=0.8)
+            axes_sun_cam.set_xlim(np.min(data['MJD']) - 1 / 86400, np.max(data['MJD']) + 1 / 86400)
+            plt.xticks(rotation=15)
+            plt.ticklabel_format(useOffset=False)
+            plt.tight_layout()
+            fig_sun_cam.savefig(self.folder_save + f"{key} - cam_mekf_sun_estimation_b.png")

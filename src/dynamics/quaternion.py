@@ -164,15 +164,14 @@ class Quaternions(object):
         """
         Q = self.todcm()
         yaw = np.arctan2(Q[0, 1], Q[0, 0])
-        if abs(Q[0, 2]) > 1:
-            Q[0, 2] = Q[0, 2] / abs(Q[0, 2])
         pitch = np.arcsin(-Q[0, 2])
         roll = np.arctan2(Q[1, 2], Q[2, 2])
-        if abs(yaw) > np.pi:
+
+        if abs(yaw) >= np.pi:
             yaw = yaw - 2 * np.sign(yaw) * np.pi
-        if abs(pitch) > np.pi:
+        if abs(pitch) >= np.pi:
             pitch = pitch - 2 * np.sign(pitch) * np.pi
-        if abs(roll) > np.pi:
+        if abs(roll) >= np.pi:
             roll = roll - 2 * np.sign(roll) * np.pi
         return yaw, pitch, roll
 

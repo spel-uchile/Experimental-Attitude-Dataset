@@ -102,12 +102,12 @@ class RealData:
         fig, axes = plt.subplots(1, 3, figsize=(12, 4.1))
         fig.suptitle(title) if title is not None else None
         center_mean = self.data[['mag_x', 'mag_y', 'mag_z']].mean()
-        axes[0].set_title(f"({np.round(center_mean[0], 2)}, {np.round(center_mean[2], 2)})")
-        axes[1].set_title(f"({np.round(center_mean[1], 2)}, {np.round(center_mean[2], 2)})")
-        axes[2].set_title(f"({np.round(center_mean[0], 2)}, {np.round(center_mean[1], 2)})")
+        axes[0].set_title(f"({np.round(center_mean.iloc[0], 2)}, {np.round(center_mean.iloc[2], 2)})")
+        axes[1].set_title(f"({np.round(center_mean.iloc[1], 2)}, {np.round(center_mean.iloc[2], 2)})")
+        axes[2].set_title(f"({np.round(center_mean.iloc[0], 2)}, {np.round(center_mean.iloc[1], 2)})")
 
         axes[0].plot(self.data['mag_x'], self.data['mag_z'], '.',  alpha=0.7)
-        axes[0].plot(center_mean[0], center_mean[2], 'r*')
+        axes[0].plot(center_mean.iloc[0], center_mean.iloc[2], 'r*')
         # axes[0].plot(contour_center_xz[0], contour_center_xz[1], 'y*')
         # axes[0].plot(hull_points_xz[:, 0], hull_points_xz[:, 1], 'r-', label='Contorno exterior')
         axes[0].grid()
@@ -116,7 +116,7 @@ class RealData:
         axes[0].set_box_aspect(1)
 
         axes[1].plot(self.data['mag_y'], self.data['mag_z'], '.',  alpha=0.7)
-        axes[1].plot(center_mean[1], center_mean[2], 'r*')
+        axes[1].plot(center_mean.iloc[1], center_mean.iloc[2], 'r*')
         axes[1].grid()
         # axes[1].plot(contour_center_yz[0], contour_center_yz[1], 'y*')
         # axes[1].plot(hull_points_yz[:, 0], hull_points_yz[:, 1], 'r-', label='Contorno exterior')
@@ -124,7 +124,7 @@ class RealData:
         axes[1].set_xlabel('Mag z [mG]')
         axes[1].set_box_aspect(1)
         axes[2].plot(self.data['mag_x'], self.data['mag_y'], '.', alpha=0.7)
-        axes[2].plot(center_mean[0], center_mean[1], 'r*')
+        axes[2].plot(center_mean.iloc[0], center_mean.iloc[1], 'r*')
         axes[2].grid()
         # axes[2].plot(contour_center_xy[0], contour_center_xy[1], 'y*')
         # axes[2].plot(hull_points_xy[:, 0], hull_points_xy[:, 1], 'r-', label='Contorno exterior')
@@ -524,28 +524,60 @@ class RealData:
             with open(self.folder_path + "/" + f"{name_}_synth_vec.pkl", 'rb') as fp:
                 channels_video = pickle.load(fp)
 
-            fig = plt.figure()
-            plt.title("Earth center diection - BF")
+            fig_earth, ax_earth = plt.subplots(figsize=(8, 4.5))
+            plt.title("Earth center direction - BF")
             plt.ylabel("Unit vector")
-            plt.xlabel("MJD")
-            plt.plot(np.array(data_video['MJD'] - data_video['MJD'][0]) * 86400, data_video[['e_b_x', 'e_b_y', 'e_b_z']], '.', label=r'Determination')
-            plt.plot((channels_video['MJD'] - channels_video['MJD'][0]) * 86400, channels_video['earth'], label='True')
-            plt.legend()
-            plt.grid()
-            fig.savefig(VIDEO_FOLDER + "results/" + "vec_earth_b_comp.png")
-            plt.show()
+            plt.xlabel("Time [s]")
 
-            fig = plt.figure()
+            t_calc = (np.array(data_video['MJD']) - data_video['MJD'][0]) * 86400
+            t_true = (np.array(channels_video['MJD']) - channels_video['MJD'][0]) * 86400
+
+            h_cx, = ax_earth.plot(t_calc, data_video['e_b_x'], 'o', label=r'$e_{x,c}$', alpha=0.9)
+            h_cy, = ax_earth.plot(t_calc, data_video['e_b_y'], 'o', label=r'$e_{y,c}$', alpha=0.9)
+            h_cz, = ax_earth.plot(t_calc, data_video['e_b_z'], 'o', label=r'$e_{z,c}$', alpha=0.9)
+
+            h_tx, = ax_earth.plot(t_true, channels_video['earth'][:, 0], '-', label=r'$e_{x,c}$')
+            h_ty, = ax_earth.plot(t_true, channels_video['earth'][:, 1], '-', label=r'$e_{y,c}$')
+            h_tz, = ax_earth.plot(t_true, channels_video['earth'][:, 2], '-', label=r'$e_{z,c}$')
+
+            h_tx.set_color(h_cx.get_color())
+            h_ty.set_color(h_cy.get_color())
+            h_tz.set_color(h_cz.get_color())
+
+            leg1 = ax_earth.legend(handles=[h_cx, h_cy, h_cz], title='Determination', loc='upper left', bbox_to_anchor=(1.02, 0.5), borderaxespad=0., frameon=True)
+            ax_earth.add_artist(leg1)
+            leg2 = ax_earth.legend(handles=[h_tx, h_ty, h_tz], title='True', loc='lower left', bbox_to_anchor=(1.02, 0.5), borderaxespad=0., frameon=True)
+            ax_earth.grid(True, alpha=0.3)
+            fig_earth.tight_layout()
+            fig_earth.savefig(VIDEO_FOLDER + "results/" + "vec_earth_b_comp.png")
+
+            fig_sun, ax_sun = plt.subplots(figsize=(8, 4.5))
             plt.title("Sun center direction - BF")
             plt.ylabel("Unit vector")
-            plt.xlabel("MJD")
-            plt.plot(np.array(data_video['MJD'] - data_video['MJD'][0]) * 86400,
-                     data_video[['s_b_x', 's_b_y', 's_b_z']], '.', label=r'Determination')
-            plt.plot((channels_video['MJD'] - channels_video['MJD'][0]) * 86400, channels_video['sun'], label='True')
-            plt.legend()
-            plt.grid()
-            fig.savefig(VIDEO_FOLDER + "results/" + "vec_sun_b_comp.png")
-            plt.show()
+            plt.xlabel("Time [s]")
+
+            h_cx, = ax_sun.plot(t_calc, data_video['s_b_x'], 'o', label=r'$s_{x,c}$', alpha=0.9)
+            h_cy, = ax_sun.plot(t_calc, data_video['s_b_y'], 'o', label=r'$s_{y,c}$', alpha=0.9)
+            h_cz, = ax_sun.plot(t_calc, data_video['s_b_z'], 'o', label=r'$s_{z,c}$', alpha=0.9)
+
+            h_tx, = ax_sun.plot(t_true, channels_video['sun'][:, 0], '-', label=r'$s_{x,c}$')
+            h_ty, = ax_sun.plot(t_true, channels_video['sun'][:, 1], '-', label=r'$s_{y,c}$')
+            h_tz, = ax_sun.plot(t_true, channels_video['sun'][:, 2], '-', label=r'$s_{z,c}$')
+
+            h_tx.set_color(h_cx.get_color())
+            h_ty.set_color(h_cy.get_color())
+            h_tz.set_color(h_cz.get_color())
+
+            leg1 = ax_sun.legend(handles=[h_cx, h_cy, h_cz], title='Determination', loc='upper left',
+                                   bbox_to_anchor=(1.02, 0.5), borderaxespad=0., frameon=True)
+            ax_sun.add_artist(leg1)
+            leg2 = ax_sun.legend(handles=[h_tx, h_ty, h_tz], title='True', loc='lower left',
+                                   bbox_to_anchor=(1.02, 0.5), borderaxespad=0., frameon=True)
+            ax_sun.grid(True, alpha=0.3)
+            fig_sun.tight_layout()
+            fig_sun.savefig(VIDEO_FOLDER + "results/" + "vec_sun_b_comp.png")
+
+        plt.close("all")
 
     def plot_windows(self, VIDEO_FOLDER):
         fig, ax = plt.subplots()
@@ -668,6 +700,7 @@ class RealData:
         d_true_gyro = np.array([[1.5, 0.00, 0.0], [0.00, 1.1, 0.0], [0.0, 0.0, 2.5]]) * 0.001
         gyro_matrix_noise = 0.5 * (self.std_rn_w ** 2 / dt + self.std_rw_w ** 2 * dt / 12) ** 0.5
         bias_true = [b_true_gyro]
+
         omega_measure = [w_b[0] + b_true_gyro + gyro_matrix_noise * np.random.normal(0, np.array( [1,  1, 1]))]
         for i in range(1, len(w_b)):
             current_bias_true = bias_true[-1] + self.std_rw_w * dt ** 0.5 * np.random.normal(0, np.array([1, 1, 1]))
@@ -676,6 +709,7 @@ class RealData:
             bias_true.append(current_bias_true)
             omega_measure.append(current_omega)
         omega_measure = np.array(omega_measure)
+
         bias_true = np.array(bias_true)
         h_ = angular_momentum(self.sc_inertia, w_b)
         data_['acc_x'] = omega_measure[:, 0] * np.rad2deg(1)
@@ -708,7 +742,8 @@ class RealData:
         self.data['acc_y'] *= np.deg2rad(1)
         self.data['acc_z'] *= np.deg2rad(1)
 
-    def create_sim_video(self, channels: dict, video_names: list[str], video_last_frame_date: list[str], fps: int) -> None:
+    def create_sim_video(self, channels: dict, video_names: list[str], video_last_frame_date: list[str], fps: int,
+                         delay_time: float) -> None:
         # camera and frames
         timestamp_list = [datetime.datetime.strptime(video_last_frame, '%Y/%m/%d %H:%M:%S').replace(tzinfo=datetime.timezone.utc).timestamp() for video_last_frame in video_last_frame_date]
         tim_sec_list = timestamp_to_julian(np.array(timestamp_list)) - _MJD_1858
@@ -774,7 +809,7 @@ class RealData:
                     video_salida.write(frame)
                     j += 1
                 video_salida.release()
-                data_ref_video = {'MJD': t_new/86400 + mjd[0], 'earth': earth_b_vec, 'sun': sun_b_vec}
+                data_ref_video = {'MJD': (t_new + delay_time)/86400 + mjd[0], 'earth': earth_b_vec, 'sun': sun_b_vec}
                 with open(self.folder_path + f"{video_names[i].split('.')[0]}_synth_vec.pkl", 'wb') as vec_file:
                     pickle.dump(data_ref_video, vec_file)
 
