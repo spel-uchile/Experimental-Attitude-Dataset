@@ -176,6 +176,37 @@ class Quaternions(object):
         return yaw, pitch, roll
 
     @staticmethod
+    def _wrap_pi(a):
+        return (a + np.pi) % (2.0 * np.pi) - np.pi
+
+    def to213(self):
+        """
+        Extrae los ángulos de la secuencia 2-1-3 desde Q = C^b_i.
+        Convención: Q = R2(gamma) * R1(beta) * R3(alpha)
+        Devuelve: alpha (eje-3), beta (eje-1), gamma (eje-2) en radianes.
+        """
+        Q = self.todcm()
+
+        # beta
+        s_psi = Q[1, 2]  # Q23 = -sin(beta)
+        s_psi = np.clip(s_psi, -1.0, 1.0)
+        psi = np.arcsin(s_psi)
+        c_psi = np.sqrt(max(0.0, 1.0 - s_psi * s_psi))
+        eps = 1e-8
+
+        if c_psi > eps:
+            # caso nominal
+            alpha = np.arctan2(-Q[1, 0], Q[1, 1])  # tan(alpha) = Q21/Q22
+            gamma = np.arctan2(-Q[0, 2], Q[2, 2])  # tan(gamma) = Q13/Q33
+        else:
+            # gimbal lock (|cos(beta)| ~ 0): fijamos alpha = 0
+            alpha = 0.0
+            # gamma determinado por combinación (alpha ± gamma)
+            gamma = np.arctan2(-Q[2, 0], Q[0, 0])  # usa Q31 y Q11
+
+        return self._wrap_pi(alpha), self._wrap_pi(psi), self._wrap_pi(gamma)
+
+    @staticmethod
     def quat_from_ypr(yaw_, pitch_, roll_):
         q_yaw = Quaternions([np.array([0, 0, 1]), yaw_])
         q_pitch = Quaternions([np.array([0, 1, 0]), pitch_])

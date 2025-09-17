@@ -51,6 +51,7 @@ class MEKF(EKF):
         self.sigma_bias = 0
         self.tau = 1000
         self.gamma = 0
+
         self.bias_model = None#"GM"
         self.historical = {'mjd_ekf':[], 'q_est': [], 'b_est': [np.zeros(3)], 'mag_est': [], 'omega_est': [],
                            'p_cov': [np.diag(self.covariance_P)], 'css_est': [], 'sun_b_est': [], 'earth_b_est': []}
@@ -103,56 +104,6 @@ class MEKF(EKF):
 
         new_p_k = phi.dot(self.covariance_P).dot(phi.T) + self.kf_Q
         return new_p_k
-
-    def propagate_cov_P(self, dt, omega_eff):
-        # usa ω - b̂
-        Om = skew(omega_eff)
-        Om_dt = Om * dt
-
-        # Bloques de Phi
-        Phi_tt = rodrigues_exp(-Om_dt)  # exp(-[ω]x dt)
-        # Integral de la exp para el acoplo con bias:
-        # Φ_{θb} = - ∫_0^dt exp(-[ω]x s) ds  ≈ - J_l(ωdt) * dt
-        # (identidad útil: ∫ exp(A s) ds = A^{-1}(exp(A dt)-I); en SO(3) → J_l)
-        Jl = left_jacobian_SO3(Om_dt)
-        Phi_tb = - Jl * dt  # 3x3
-        if self.bias_model == "GM":
-            Phi_bb = np.exp(-dt / self.tau) * np.eye(3)
-        else:  # RW
-            Phi_bb = np.eye(3)
-
-        Phi = np.block([[Phi_tt, Phi_tb], [np.zeros((3, 3)), Phi_bb]])
-
-        # --- Ruido de proceso discreto ---
-        # Densidades (rad^2/s^3 para bias RW? usa consistencia):
-        #   Sg: densidad espectral de ruido blanco del gyro (rad^2/s)
-        #   Sb: densidad del proceso de bias (RW: rad^2/s, GM: σ_b^2 * 2/τ en continuo)
-        Sg = self.sigma_omega ** 2  # p.ej. (ARW)^2 en rad^2/s
-        if self.bias_model == "GM":
-            Qb = (self.sigma_bias ** 2) * (1 - np.exp(-2 * dt / self.tau)) * np.eye(3)
-        else:  # RW
-            Qb = (self.sigma_bias ** 2) * dt * np.eye(3)
-
-        # Mapeo de ruidos al estado de error: δθ recibe -n_ω; δb recibe n_b
-        G = np.block([
-            [-np.eye(3), np.zeros((3, 3))],
-            [np.zeros((3, 3)), np.eye(3)]
-        ])
-        # Discreto del canal gyro: var por paso para n_ω (rad^2/s^2):
-        Qg = (Sg / dt) * np.eye(3)
-
-        # (Opcional) ruido extra de “jerk” de actitud para absorber aceleraciones intra-muestra
-        Qextra = (self.gamma * dt ** 3) * np.eye(3)  # gamma ~ Var(|dot(ω)|)
-        Qd_block = np.block([
-            [Qg + Qextra, np.zeros((3, 3))],
-            [np.zeros((3, 3)), Qb]
-        ])
-
-        # Propagación correcta
-        P = self.covariance_P
-        P = Phi @ P @ Phi.T + G @ Qd_block @ G.T
-        self.covariance_P = P
-        return P
 
     def propagate_cov_P_old(self, step, omega):
         F_x = np.zeros((6, 6))
@@ -207,6 +158,9 @@ class MEKF(EKF):
                 new_z_k = new_z_k # / np.linalg.norm(new_z_k)
             elif sensor_type == 'css':
                 new_z_k = - 930 * np.eye(3) @ new_z_k / np.linalg.norm(new_z_k)
+                # new_z_k[0] *= -1
+                # new_z_k[2] *= -1
+
                 new_z_k[new_z_k < 0] = 0
         return new_z_k
 

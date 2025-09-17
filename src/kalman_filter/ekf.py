@@ -21,6 +21,7 @@ class EKF:
         # inv_inertia = np.linalg.inv(inertia)
         # self.inv_inertia = inv_inertia
         self.kf_R = R
+        self.kf_R_a = {'mag': R, 'css': R}
         self.kf_Q = Q
         self.dim_rows = len(R)
         self.dim_cols = len(R[0])
@@ -28,6 +29,8 @@ class EKF:
         self.sigma_bias = 0
         self.kf_S = np.zeros([self.dim_rows, self.dim_cols])
         self.kf_K = np.zeros([self.dim_rows, self.dim_cols])
+        self.s_hist = {'mag': [], 'css': []}
+        self.S_hat_i = np.zeros([self.dim_rows, self.dim_cols])
         self.covariance_P = P
         self.internal_cov_P = self.covariance_P.copy()
         self.state = np.zeros(len(self.covariance_P))
@@ -74,6 +77,7 @@ class EKF:
     def inject_vector(self, vector_b, vector_i, gain=None, sensor='mag', sigma2=None):
         if sigma2 is not None:
             self.kf_R = sigma2 * np.eye(len(vector_i))
+            self.kf_R_a[sensor] = sigma2 * np.eye(len(vector_i))
         new_z_k = self.get_observer_prediction(self.internal_state, vector_i, sensor_type=sensor)
         H = self.attitude_observer_model(self.internal_state, vector_i)
         if gain is not None:
@@ -82,10 +86,21 @@ class EKF:
         # else:
             # print("residual angle error (deg): {}".format(
             #    np.rad2deg(1) * np.arccos(vector_b / np.linalg.norm(vector_b) @ new_z_k / np.linalg.norm(new_z_k))))
-        self.update_covariance_matrix(H, self.internal_cov_P)
+
+        r_sensor = self.kf_R #_a[sensor]
+        s_k = self.update_covariance_matrix(H, self.internal_cov_P, r_sensor)
+
+        beta_i = 0.002
+        alpha_i = 0.00005
+        nu =  vector_b - new_z_k
+        self.S_hat_i = (1 - beta_i) * self.S_hat_i + beta_i * (nu @ nu.T)
+
+        #self.kf_R_a[sensor] = (1 - alpha_i) * self.kf_R_a[sensor]  + alpha_i * (self.S_hat_i  - H @ self.internal_cov_P @ H.T)
+
+        self.s_hist[sensor] = s_k
         self.get_kalman_gain(H, self.internal_cov_P)
         self.internal_state = self.update_state(self.internal_state, vector_b, new_z_k, H)
-        self.internal_cov_P = self.update_covariance_P_matrix(H, self.internal_cov_P)
+        self.internal_cov_P = self.update_covariance_P_matrix(H, self.internal_cov_P, r_sensor)
         return new_z_k
 
     def inject_vector_6(self, vector1_b, vector1_i, vector2_b, vector2_i, sigma1, sigma2):
@@ -144,10 +159,11 @@ class EKF:
         z_k = self.attitude_observer_model(new_x_k, reference_vector) @ reference_vector
         return z_k
 
-    def update_covariance_matrix(self, H, new_P_k):
+    def update_covariance_matrix(self, H, new_P_k, kf_R):
         if np.any(np.isnan(H)):
             print("H - NAN")
-        self.kf_S = H @ (new_P_k @ H.T) + self.kf_R
+        self.kf_S = H @ (new_P_k @ H.T) + kf_R
+        return self.kf_S
 
     def get_kalman_gain(self, H, new_P_k):
         if len(self.kf_S) > 1:
@@ -163,10 +179,10 @@ class EKF:
 
     def update_state(self, new_x_k, z_k_medido, z_from_observer, H_):
         new_x = new_x_k + self.kf_K.dot(z_k_medido - z_from_observer + H_ @ new_x_k)
-        new_x[:3] = new_x[:3] / np.linalg.norm(new_x[:3])
+        #new_x[:3] = new_x[:3] / np.linalg.norm(new_x[:3])
         return new_x
 
-    def update_covariance_P_matrix(self, H, new_P_k):
+    def update_covariance_P_matrix(self, H, new_P_k, kf_r):
         # full solution to minimizing p+ = (I - KH) @ p- @ (I - KH).T + K @ R @ K.T,
         # if K is optimized, then p+ = (I -KH) @ p-,
         # but it is not recommended when numerical instabilities are presents

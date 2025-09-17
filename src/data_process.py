@@ -76,6 +76,9 @@ class RealData:
         self.sc_inertia = np.array([38478.678, 38528.678, 6873.717, 0, 0, 0]) * 1e-6
         self.data_video = {}
 
+    def get_dt(self):
+        return self.step
+
     def set_geometric_mag_bias(self):
         # points_xy = self.data[['mag_x', 'mag_y']].values
         # points_xz = self.data[['mag_x', 'mag_z']].values
@@ -349,7 +352,7 @@ class RealData:
         plt.close()
         return ekf_omega.historical[-1]
 
-    def calibrate_mag(self, scale: np.array = None, bias: np.array = None, mag_i: np.array = None,
+    def calibrate_mag(self, scale: np.ndarray = None, bias: np.ndarray = None, mag_i: np.ndarray = None,
                       by_file=False, force=False):
         if scale is not None and bias is not None:
             self.data[['mag_x', 'mag_y', 'mag_z']] = np.matmul(self.data[['mag_x', 'mag_y', 'mag_z']],

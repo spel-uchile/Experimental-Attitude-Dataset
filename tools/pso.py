@@ -5,6 +5,7 @@ Date: 24-08-2022
 """
 import numpy as np
 import multiprocessing
+import matplotlib.pyplot as plt
 
 MAX_CORE = multiprocessing.cpu_count()
 NCORE = int(MAX_CORE*0.6)
@@ -70,14 +71,15 @@ class PSOStandard(PSO):
         min_state = None
         while iteration < self.max_iteration:
             self.historical_position.append(self.position.copy())
-            pool = multiprocessing.Pool(processes=NCORE)
-            zip_var = [[p_, args[0], args[1]] for p_ in self.position]
-            result = pool.map(self.fitness_function, zip_var)
-            pool.close()
+            # pool = multiprocessing.Pool(processes=NCORE)
+            # zip_var = [[p_, args] for p_ in self.position]
+            # result = pool.map(self.fitness_function, zip_var)
+            # pool.close()
             # result = self.iterative_evaluation()
-            fitness = np.array([elem[0] for elem in result])
+            # fitness = np.array([elem[0] for elem in result])
+            fitness = np.array([self.fitness_function(p_) for p_ in self.position])
             self.historical_fitness.append(fitness)
-            result = [elem[1] for elem in result]
+            # result = [elem[1] for elem in result]
             self.pbest_position[fitness < self.pbest_fitness_value] = self.position[fitness < self.pbest_fitness_value]
             self.pbest_fitness_value[fitness < self.pbest_fitness_value] = fitness[fitness < self.pbest_fitness_value]
             best_particle_idx = np.argmin(fitness)
@@ -87,7 +89,7 @@ class PSOStandard(PSO):
             if best_fitness < self.gbest_fitness_value:
                 self.gbest_fitness_value = best_fitness
                 self.gbest_position = self.position[best_particle_idx]
-                min_state = result[best_particle_idx]
+                #min_state = result[best_particle_idx]
 
             self.historical_g_position.append(self.gbest_position)
             gbest = np.tile(self.gbest_position, (self.npar, 1))
@@ -111,6 +113,12 @@ class PSOStandard(PSO):
 
     def get_gains(self):
         return self.gbest_position
+
+    def plot(self):
+        plt.figure()
+        plt.plot(self.evol_best_fitness, color='red')
+        plt.plot(self.evol_p_fitness, '.', color='blue')
+        plt.show()
 
 
 class PSOMagCalibration(PSO):

@@ -295,7 +295,7 @@ def get_lvlh2b(sat_pos_, sat_vel_, q_i2b_):
     # q_ = PyQuaternion(matrix=matrix_i2lvlh)
     q_ = trace_method(matrix_i2lvlh)
     current_quaternion_lvlh2b = Quaternions(Quaternions(q_).conjugate()) * Quaternions(q_i2b_)
-    return current_quaternion_lvlh2b(), current_quaternion_lvlh2b.toypr()
+    return current_quaternion_lvlh2b(), current_quaternion_lvlh2b.to213()
 
 def compute_i2lvlh(pos_i: np.ndarray, vel_i: np.ndarray):
     r_norm = np.linalg.norm(pos_i)

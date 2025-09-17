@@ -81,7 +81,7 @@ class Monitor:
         plt.draw()
         names_to_save = x_dataset + "_" + y_dataset
         plt.xticks(rotation=15)
-        # plt.ticklabel_format(useOffset=False)
+        plt.ticklabel_format(axis='x', style='plain', useOffset=False)
         plt.tight_layout()
         fig.savefig(self.folder_save + names_to_save + '.png')
         return fig
@@ -102,23 +102,29 @@ class Monitor:
         plt.show(block=False)
 
     def plot_video_performance(self):
-        fig_picture, axes = plt.subplots(nrows=2, ncols=1, sharex=True)
-        axes[0].grid()
-        axes[0].set_xlabel("MJD")
-        axes[1].grid()
-        axes[1].set_xlabel("MJD")
-        axes[0].set_ylabel("Roll [deg]")
-        axes[1].set_ylabel("Pitch [deg]")
-        axes[0].plot(self.dataset['mjd'], np.array(self.dataset['ypr_lvlh2b'])[:, 2] * RAD2DEG, label="EKF")
-        axes[1].plot(self.dataset['mjd'], np.array(self.dataset['ypr_lvlh2b'])[:, 1] * RAD2DEG, label="EKF")
         for key, data in self.video_dataset.items():
-            axes[0].plot(data['MJD'], data['roll'] * RAD2DEG, 'o', label="Video {}".format(key))
-            axes[1].plot(data['MJD'], data['pitch'] * RAD2DEG, 'o', label="Video {}".format(key))
-            # axes[0].set_xlim(np.min(data['MJD']), np.max(data['MJD']))
-            # axes[1].set_xlim(np.min(data['MJD']), np.max(data['MJD']))
-        axes[0].legend()
-        axes[1].legend()
-        fig_picture.savefig(self.folder_save + f"ypr_estimation_lvlh.png")
+            fig_picture, axes = plt.subplots(nrows=2, ncols=1, sharex=True)
+            axes[0].grid()
+            axes[1].grid()
+            axes[0].set_ylabel("Pitch [deg]")
+            axes[1].set_ylabel("Roll [deg]")
+            axes[0].set_xlabel("MJD")
+            axes[1].set_xlabel("MJD")
+            axes[0].plot(self.dataset['mjd'], np.array(self.dataset['ypr_lvlh2b'])[:, 1] * RAD2DEG, label="MEKF")
+            axes[1].plot(self.dataset['mjd'], np.array(self.dataset['ypr_lvlh2b'])[:, 2] * RAD2DEG, label="MEKF")
+
+            axes[0].plot(data['MJD'], data['pitch'] * RAD2DEG, 'o', label="CAM")
+            axes[1].plot(data['MJD'], data['roll'] * RAD2DEG, 'o', label="CAM")
+
+            axes[0].set_xlim(np.min(data['MJD']) - 1 / 86400, np.max(data['MJD']) + 1 / 86400)
+            axes[1].set_xlim(np.min(data['MJD']) - 1 / 86400, np.max(data['MJD']) + 1 / 86400)
+
+            axes[0].legend()
+            axes[1].legend()
+            plt.xticks(rotation=15)
+            plt.ticklabel_format(useOffset=False)
+            plt.tight_layout()
+            fig_picture.savefig(self.folder_save + f"{key} - ypr_estimation_lvlh.png")
 
         E = np.asarray(self.dataset['earth_b_est'], float)
         if E.dtype == object: E = np.stack(E)
