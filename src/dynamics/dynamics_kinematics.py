@@ -23,7 +23,7 @@ from src.dynamics.MagEnv import MagEnv, rotationY, rotationZ
 from tools.rodrigues_parameters import get_shadow_set_mrp, omega_from_mpr
 
 solar_system_ephemeris.set('de430')
-_MJD_1858 = 2400000.5
+MJD_1858 = 2400000.5
 RAD2DEG = 180 / np.pi
 DEG2RAD = 1 / RAD2DEG
 au = 149597870.691  # km
@@ -112,7 +112,7 @@ class Dynamics(object):
             # print("  - {}/{}".format(i, n))
 
         self.channels = {'full_time': self.jd_time_array,
-                         'mjd': self.jd_time_array - _MJD_1858,
+                         'mjd': self.jd_time_array - MJD_1858,
                          'sim_time': (self.jd_time_array - self.jd_time_array[0]) * 86400,
                          'sat_pos_i': sat_pos_gcrs,
                          'lonlat': np.array([sat_lon, sat_lat]).T,
@@ -166,7 +166,7 @@ class Dynamics(object):
 
     def load_data(self, data_):
         self.channels = dict(data_)
-        self.channels['mjd'] = self.channels['full_time'] - _MJD_1858
+        self.channels['mjd'] = self.channels['full_time'] - MJD_1858
 
     def calc_mag(self):
         mag_ned = self.channels['mag_ned']
@@ -202,7 +202,7 @@ class Dynamics(object):
 
     def plot_darkness(self, folder_name):
         is_dark_ = self.channels['is_dark']
-        time_ = self.channels['full_time'] - _MJD_1858
+        time_ = self.channels['full_time'] - MJD_1858
         fig = plt.figure()
         plt.title('"Dark zone"', pad=20, fontsize=12, color='black')
         plt.plot(time_, is_dark_)
@@ -219,7 +219,7 @@ class Dynamics(object):
         mag_x = self.channels['sun_sc_i'][:, 0]
         mag_y = self.channels['sun_sc_i'][:, 1]
         mag_z = self.channels['sun_sc_i'][:, 2]
-        time_ = self.channels['full_time'] - _MJD_1858
+        time_ = self.channels['full_time'] - MJD_1858
 
         fig = plt.figure()
         plt.title('Sun position relative to spacecraf - GCRS [km]', pad=20, fontsize=12, color='black')
@@ -239,7 +239,7 @@ class Dynamics(object):
         mag_x = self.channels['mag_i'][:, 0]
         mag_y = self.channels['mag_i'][:, 1]
         mag_z = self.channels['mag_i'][:, 2]
-        time_ = self.channels['full_time'] - _MJD_1858
+        time_ = self.channels['full_time'] - MJD_1858
         mag_norm = np.linalg.norm(self.channels['mag_i'], axis=1)
 
         fig = plt.figure()

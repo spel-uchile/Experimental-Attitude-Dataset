@@ -46,8 +46,8 @@ class RealData:
 
     def __init__(self, folder, file_directory):
         # Real data
-        self.std_rn_w = np.deg2rad(0.2) # 1e-3  # gyro noise standard deviation [rad/s]
-        self.std_rw_w = 1e-4  # gyro random walk standard deviation [rad/s*s^0.5]
+        self.sigma_v_omega = np.deg2rad(0.005)# np.deg2rad(0.2) # 1e-3  # gyro noise standard deviation [rad/s]
+        self.sigma_u_bias = np.deg2rad(4.2e-3) # 1e-4  # np.deg2rad(0.005) gyro random walk standard deviation [rad/s*s^0.5]
         self.std_rn_mag = 2.8  # magnetometer noise standard deviation [mG]
         self.I_nr_std_cos = np.deg2rad(1.8) # max cosine error [deg]
         self.I_max = 930 # Max expected value [mA]
@@ -101,7 +101,7 @@ class RealData:
         # contour_center_yz = np.mean(hull_points_yz, axis=0)
         self.show_mag_geometry("Raw Mag Data")
 
-    def show_mag_geometry(self, title: str =None):
+    def show_mag_geometry(self, title: str =None, show_plot=False):
         fig, axes = plt.subplots(1, 3, figsize=(12, 4.1))
         fig.suptitle(title) if title is not None else None
         center_mean = self.data[['mag_x', 'mag_y', 'mag_z']].mean()
@@ -137,7 +137,8 @@ class RealData:
         plt.tight_layout()
         name_ = self.folder_path + "results/"+ f'{title.replace(" ", "_").lower()}_geo.jpg'
         fig.savefig(name_)
-        plt.close()
+        if show_plot:
+            plt.show()
 
     def set_inertia(self, inertia_):
         self.sc_inertia = np.diag(inertia_[:3])
@@ -168,7 +169,7 @@ class RealData:
             gy = gy * np.pi / 180
             gz = gz * np.pi / 180
 
-        self.data[['acc_x', 'acc_y', 'acc_z']] += np.array([gx, gy, gz])
+        self.data[['acc_x', 'acc_y', 'acc_z']] -= np.array([gx, gy, gz])
 
     def plot_main_data(self, sim_flag=False):
         self.plot_key(['mag_x', 'mag_y', 'mag_z', '||mag||'], color=['blue', 'orange', 'green', 'black'],
@@ -320,10 +321,10 @@ class RealData:
 
     def calibrate_gyro(self):
         print("Calibrating Gyroscope ...")
-        sigma_omega2 = self.std_rn_w ** 2 # 0.3 * np.deg2rad(1)
+        sigma_omega2 = self.sigma_v_omega ** 2 # 0.3 * np.deg2rad(1)
         R = np.eye(3) * sigma_omega2
         P = np.eye(6) * 1.0
-        Q = np.eye(6) * self.std_rw_w
+        Q = np.eye(6) * self.sigma_u_bias
         ekf_omega = EKFOmega(self.sc_inertia, R, Q, P)
         ekf_omega.set_first_state(np.concatenate((self.data[['acc_x', 'acc_y', 'acc_z']].values[0], np.zeros(3))))
         ekf_omega_hist = {'new_omega': [self.data[['acc_x', 'acc_y', 'acc_z']].values[0]],
@@ -701,12 +702,12 @@ class RealData:
         dt = self.step
         b_true_gyro = -np.array([0.07, 0.01, -0.04])
         d_true_gyro = np.array([[1.5, 0.00, 0.0], [0.00, 1.1, 0.0], [0.0, 0.0, 2.5]]) * 0.001
-        gyro_matrix_noise = 0.5 * (self.std_rn_w ** 2 / dt + self.std_rw_w ** 2 * dt / 12) ** 0.5
+        gyro_matrix_noise = 0.5 * (self.sigma_v_omega ** 2 / dt + self.sigma_u_bias ** 2 * dt / 12) ** 0.5
         bias_true = [b_true_gyro]
 
         omega_measure = [w_b[0] + b_true_gyro + gyro_matrix_noise * np.random.normal(0, np.array( [1,  1, 1]))]
         for i in range(1, len(w_b)):
-            current_bias_true = bias_true[-1] + self.std_rw_w * dt ** 0.5 * np.random.normal(0, np.array([1, 1, 1]))
+            current_bias_true = bias_true[-1] + self.sigma_u_bias * dt ** 0.5 * np.random.normal(0, np.array([1, 1, 1]))
             diff_bias = 0.5 * (current_bias_true + bias_true[-1])
             current_omega = w_b[i] + diff_bias + gyro_matrix_noise * np.random.normal(0, np.array( [1,  1, 1]))
             bias_true.append(current_bias_true)

@@ -2,6 +2,8 @@
 Created by Elias Obreque
 Date: 10-09-2023
 email: els.obrq@gmail.com
+
+https://ntrs.nasa.gov/api/citations/20040031762/downloads/20040031762.pdf
 """
 # VARIABLE
 # B_k: measure, R_k: Reference, x_state = [bT, DT]
@@ -44,29 +46,291 @@ def sigma_2(x_est_, r_cov_sensor, B_k):
     return sigma_temp
 
 
-class MagUKF():
+class MagUKF_new:
     # Unscented Filter Formulation
-    def __init__(self, b_est_std, d_est_std, alpha=0.1, beta=2, x_dim=9):
-        self.x_est = np.zeros(x_dim)
+    def __init__(self, b_est_std, d_est_std, alpha=0.1, beta=2, x_dim=9,
+                 # --- IMPROVEMENT 1: Process Noise (Q) Parameters ---
+                 q_bias_drift=1e-5, q_scale_drift=1e-10,
+                 # --- IMPROVEMENT 2: Gating (Robustness) Parameter ---
+                 gating_threshold=9.0):
 
-        sensor_noise = .1
+        self.x_est = np.zeros(x_dim)
         self.dim_x = x_dim
         self.dim_v = 0
         self.dim_n = 0
         self.full_dim = self.dim_x + self.dim_v + self.dim_n
         self.pCov_x = np.diag([*b_est_std, *d_est_std])  # state covariance
         self.flag = False
-        self.pCov_zero = self.pCov_x.copy() * 0.5
         self.fisher_matrix = np.diag([*b_est_std, *d_est_std])
-        # self.q_matrix = np.diag([1, 1, 1, 1e-3, 1e-3, 1e-3, 1e-5, 1e-5, 1e-5]) * 0.01
-        # self.pCov_v = np.diag(np.zeros(0))  # process covariance
-        # self.pCov_n = np.diag(np.zeros(0))  # measurement covariance
-        # fill matrix with diagonal
-        # self.pCov = np.zeros((self.full_dim, self.full_dim))
+        self.historical = {'bias': [], 'scale': [], 'error': [], 'P': [], 'eigP': []}
 
-        # self.pCov[:self.dim_x, :self.dim_x] = self.pCov_x
-        # self.pCov[self.dim_x:self.dim_x + self.dim_v, self.dim_x:self.dim_x + self.dim_v] = self.pCov_v
-        # self.pCov[self.dim_x + self.dim_v:self.full_dim, self.dim_x + self.dim_v:self.full_dim] = self.pCov_n
+        # UKF Parameters
+        self.alpha = alpha
+        self.beta = beta
+        self.n = self.x_est.size
+        self.kappa = 3.0 - self.n
+        self.lamda = self.alpha ** 2 * (self.n + self.kappa) - self.n
+        self.gamma = np.sqrt(self.n + self.lamda)
+        self.weights_mean, self.weights_cov = self.get_weights()
+
+        # --- IMPROVEMENT 1: Define Process Noise Matrix Q ---
+        # This models the expected parameter drift per step.
+        q_bias = [q_bias_drift] * 3
+        q_scale = [q_scale_drift] * 6
+        self.Q_k = np.diag([*q_bias, *q_scale])
+
+        # --- IMPROVEMENT 2: Define Gating Threshold ---
+        # Chi-squared threshold for 1 degree of freedom (scalar measurement)
+        # 9.0 = ~3 sigma, 16.0 = ~4 sigma
+        self.GATING_THRESHOLD = gating_threshold
+
+    def sigma_points(self, x_est, method='SQUARE-ROOT'):
+        # Sigma Points
+        sigma_points = np.zeros((2 * self.n + 1, self.n))
+        sigma_points[0] = x_est
+        if method == 'SQUARE-ROOT':
+            try:
+                # Use Cholesky. Ensures matrix is positive semi-definite
+                uu_ = cholesky((self.n + self.lamda) * self.pCov_x)
+            except np.linalg.LinAlgError:
+                # If it fails, fall back to simple sqrt (less stable)
+                print("Warning: Cholesky failed, using sqrt.")
+                uu_ = self.gamma * np.sqrt(self.pCov_x)
+        else:
+            uu_ = self.gamma * np.sqrt(self.pCov_x)
+
+        for i in range(self.n):
+            sigma_points[i + 1] = x_est + np.real(uu_[i])
+            sigma_points[i + 1 + self.n] = x_est - np.real(uu_[i])
+        return sigma_points
+
+    def save(self):
+        current_x = self.x_est.copy()
+        self.historical['bias'].append(current_x[:3])
+        self.historical['scale'].append(current_x[3:])
+        self.historical['P'].append(np.diag(self.pCov_x.copy()))
+        self.historical['eigP'].append(np.sqrt(np.linalg.eigvals(self.pCov_x)))
+
+    def calibrate(self, mag_i, mag_sensors, mag_sig=2.8):
+        _new_sensor_ukf = []
+        stop_k = 0
+        if len(mag_i) == 1:
+            self.run(mag_sensors[0], mag_i[0], mag_sig ** 2)  # , 20000, 100)
+            _bias_, _D_scale = self.get_calibration()
+            return (np.eye(3) + _D_scale) @ mag_sensors[0] - _bias_
+
+        for mag_i_, mag_b_ in tqdm(zip(mag_i, mag_sensors), total=len(mag_i), desc="UKF Calibration"):
+            self.save()
+            self.run(mag_b_, mag_i_, mag_sig ** 2)  # , 20e3, 100)
+            _bias_, _D_scale = self.get_calibration()
+            _new_sensor_ukf.append((np.eye(3) + _D_scale) @ mag_b_ - _bias_)
+            stop_k += 1
+
+        return np.asarray(_new_sensor_ukf)
+
+    def run(self, sensor_, reference_, cov_sensor_, error_up=None, error_down=None):
+        current_x = self.x_est.copy()
+
+        # --- IMPROVEMENT 1: State Prediction Step (Time Update) ---
+        # State x is propagated as constant: x_k|k-1 = x_k-1|k-1
+        # Covariance is propagated: P_k|k-1 = P_k-1|k-1 + Q_k
+        # This "inflates" the covariance to model drift and
+        # prevents the filter from stop learning.
+        self.pCov_x = self.pCov_x + self.Q_k
+        # -----------------------------------------------------------
+
+        self.lamda = self.alpha ** 2 * (self.n + self.kappa) - self.n
+        self.gamma = np.sqrt(self.n + self.lamda)
+        self.weights_mean, self.weights_cov = self.get_weights()
+
+        # sigma points
+        sigma_points = self.sigma_points(current_x)
+
+        # Propagate sigma points through h(x)
+        error_model_mean, error_y_direct = self.get_observation(sigma_points, sensor_)
+
+        # State estimate (mean of sigma points)
+        x_a = [wi * xi for wi, xi in zip(self.weights_mean, sigma_points)]
+        x_k = np.sum(np.array(x_a), axis=0)
+
+        # A priori state covariance P(k|k-1)
+        p_cov_x = self.get_state_covariance(sigma_points, x_k)
+
+        # Real measurement
+        error_measure = np.linalg.norm(sensor_) ** 2 - np.linalg.norm(reference_) ** 2
+
+        # Innovation (error)
+        error_ = (error_measure - error_model_mean)
+
+        # Measurement noise R_k
+        sig2 = sigma_2(x_k, cov_sensor_, sensor_)
+
+        # Innovation Covariance S_k = P_zz + R_k
+        p_zz = self.get_output_covariance(error_y_direct, error_model_mean) + sig2
+
+        # --- IMPROVEMENT 2: Innovation Gating (Outlier Rejection) ---
+        # Chi-squared test (normalize error by its covariance)
+        if p_zz > 1e-12:  # Avoid division by zero
+            test_estadistico = (error_ ** 2) / p_zz
+
+            if test_estadistico > self.GATING_THRESHOLD:
+                # This data point is an 'outlier' (e.g., > 3 sigma).
+                # It's too "surprising" and is likely noise.
+                # We don't update the filter, just log the error and skip.
+                self.historical['error'].append(error_)
+                # Restore covariance (since no update occurred)
+                self.pCov_x = p_cov_x - self.Q_k
+                return
+        # -------------------------------------------------------------
+
+        # Cross-Correlation Matrix P_xz
+        p_xz = self.get_cross_correlation_matrix(sigma_points, x_k, error_model_mean, error_y_direct)
+
+        # Kalman Gain K_k
+        p_zz_inv = 1.0 / p_zz if p_zz > 1e-12 else 0.0
+        kk_ = p_xz * p_zz_inv  # (p_xz @ p_zz_inv)
+
+        # --- Update Step (Correction) ---
+        # State Update: x_k|k = x_k|k-1 + K * error
+
+        # --- BUG FIX IS HERE ---
+        # We must flatten the correction (kk_ * error_) to (9,)
+        # to add it to x_k (9,), otherwise numpy broadcasting
+        # will turn self.x_est into a (9, 9) matrix.
+        self.x_est = x_k + (kk_ * error_).reshape(-1)
+
+        # Covariance Update: P_k|k = P_k|k-1 - K * S * K'
+        self.pCov_x = p_cov_x - (kk_ * p_zz) @ kk_.T  # (kk_ @ p_zz @ kk_.T)
+        self.pCov_x = (self.pCov_x + self.pCov_x.T) * 0.5  # Force symmetry
+
+        self.historical['error'].append(error_)
+
+    def get_state_covariance(self, sigma_points, x_k_):
+        px = np.zeros((self.dim_x, self.dim_x))
+        for i_ in range(len(sigma_points)):
+            x_ = sigma_points[i_][:self.dim_x] - x_k_
+            px += self.weights_cov[i_] * np.outer(x_, x_)
+        return px
+
+    def get_weights(self):
+        # Weights
+        weights_mean = np.zeros(2 * self.n + 1)
+        weights_cov = np.zeros(2 * self.n + 1)
+        weights_mean[0] = self.lamda / (self.n + self.lamda)
+        weights_cov[0] = self.lamda / (self.n + self.lamda) + (1 - self.alpha ** 2 + self.beta)
+        for i in range(2 * self.n):
+            weights_mean[i + 1] = 1 / (2 * (self.n + self.lamda))
+            weights_cov[i + 1] = 1 / (2 * (self.n + self.lamda))
+        return weights_mean, weights_cov
+
+    def get_observation(self, sigma_points, mag_sensor_):
+        mean_y = 0
+        mean_y_direct = []
+        for i_ in range(2 * self.n + 1):
+            mean_y_direct.append(error_measurement_model(mag_sensor_, sigma_points[i_][:self.dim_x]))
+            mean_y += self.weights_mean[i_] * mean_y_direct[-1]
+        return mean_y, np.atleast_2d(mean_y_direct).T
+
+    def get_cross_correlation_matrix(self, sigma_points, x_k_, z_k, sigma_z):
+        pxz = np.zeros((self.dim_x, 1))
+        for i_ in range(2 * self.n + 1):
+            dx = sigma_points[i_][:self.dim_x] - x_k_
+            dz = sigma_z[i_] - z_k
+            pxz += self.weights_cov[i_] * np.outer(dx, dz)
+        return pxz
+
+    def get_bias(self):
+        bias_ = np.array(self.historical['bias'])
+        sigma_ = np.array(self.historical['eigP'])[:, :3]
+        return bias_, bias_ + sigma_ * 3, bias_ - sigma_ * 3
+
+    def get_output_covariance(self, sigma_z, z_k):
+        # Note: The measurement is scalar, so n=1
+        kmax, n = sigma_z.shape
+        pzz = np.zeros((n, n))
+        for i_ in range(kmax):
+            dz = sigma_z[i_] - z_k
+            pzz += self.weights_cov[i_] * np.outer(dz, dz)
+        return pzz[0, 0]  # Return the scalar
+
+    def get_calibration(self):
+        bias_ = self.x_est[:3]
+        d_ = get_full_D(self.x_est[3:9])
+        return bias_, d_
+
+    def plot(self, new_sensor_error, y_true, time_, folder_save):
+        val = np.linalg.eigvals(self.pCov_x)
+        fig, axes = plt.subplots(3, 1, sharex=True)
+        fig.suptitle('UKF - Results')
+        axes[0].grid()
+        axes[0].set_ylabel('Bias')
+        axes[0].plot(time_, self.historical['bias'])
+        axes[1].grid()
+        axes[1].set_ylabel('D scale')
+        axes[1].plot(time_, self.historical['scale'])
+        axes[2].set_ylabel('Error - UKF')
+        axes[2].plot(time_, self.historical['error'])
+        axes[2].grid()
+        axes[2].set_xlabel("Modified Julian Date")
+        # axes[2].set_xticks(rotation=15)
+        # axes[2].set_ticklabel_format(useOffset=False)
+        # axes[2].set_tight_layout()
+        fig.savefig(folder_save + 'ukf_result.jpg')
+        plt.close(fig)
+
+        fig = plt.figure()
+        plt.title("UKF Error")
+        plt.plot(time_, self.historical['error'])
+        plt.grid()
+        plt.xlabel("Modified Julian Date")
+        plt.ylabel(r"$B^2 - R^2$")
+        plt.xticks(rotation=15)
+        plt.ticklabel_format(useOffset=False)
+        plt.tight_layout()
+        fig.savefig(folder_save + 'ukf_error.jpg')
+        plt.close(fig)
+
+        fig = plt.figure()
+        plt.title("Covariance P - UKF")
+        plt.plot(time_, self.historical['P'])
+        plt.grid()
+        plt.legend(["bx", "by", "bz", "Dxx", "Dyy", "Dzz", "Dxy", "Dxz", "Dyz"])
+        plt.xlabel("Modified Julian Date")
+        plt.xticks(rotation=15)
+        plt.ticklabel_format(useOffset=False)
+        plt.yscale('log')
+        plt.tight_layout()
+        fig.savefig(folder_save + 'ukf_covariance.jpg')
+        plt.close(fig)
+        # bias and D legend
+
+        mse_ukf = mean_squared_error(y_true, new_sensor_error)
+        fig = plt.figure()
+        plt.grid()
+        plt.title("UKF Magnitude Calibration")
+        plt.ylabel('Error [mG]')
+        plt.plot(time_, y_true - new_sensor_error, label='RMSE: {:2f} [mG]'.format(np.sqrt(mse_ukf)),
+                 drawstyle='steps-post', marker='.', alpha=0.7)
+        plt.xlabel("Modified Julian Date")
+        plt.xticks(rotation=15)
+        plt.ticklabel_format(useOffset=False)
+        plt.tight_layout()
+        plt.legend()
+        fig.savefig(folder_save + 'ukf_mag_cal_error.jpg')
+        plt.close(fig)
+
+
+class MagUKF:
+    # Unscented Filter Formulation
+    def __init__(self, b_est_std, d_est_std, alpha=0.1, beta=2, x_dim=9):
+        self.x_est = np.zeros(x_dim)
+        self.dim_x = x_dim
+        self.dim_v = 0
+        self.dim_n = 0
+        self.full_dim = self.dim_x + self.dim_v + self.dim_n
+        self.pCov_x = np.diag([*b_est_std, *d_est_std])  # state covariance
+        self.flag = False
+        self.fisher_matrix = np.diag([*b_est_std, *d_est_std])
         self.historical = {'bias': [], 'scale': [], 'error': [], 'P': [], 'eigP': []}
 
         self.alpha = alpha
@@ -80,7 +344,6 @@ class MagUKF():
     def sigma_points(self, x_est, method='SQUARE-ROOT'):
         # Sigma Points
         sigma_points = np.zeros((2 * self.n + 1, self.n))
-        # sigma_points_sigma2 = np.zeros((2 * self.n, self.n))
         sigma_points[0] = x_est
         if method == 'SQUARE-ROOT':
             uu_ = cholesky((self.n + self.lamda) * self.pCov_x)
@@ -89,9 +352,7 @@ class MagUKF():
         for i in range(self.n):
             sigma_points[i + 1] = x_est + np.real(uu_[i])
             sigma_points[i + 1 + self.n] = x_est - np.real(uu_[i])
-            # sigma_points_sigma2[i] = x_est + 2 * np.real(uu_[i])
-            # sigma_points_sigma2[i + self.n] = x_est - 2 * np.real(uu_[i])
-        return sigma_points# , sigma_points_sigma2
+        return sigma_points
 
     def save(self):
         current_x = self.x_est.copy()
@@ -118,16 +379,7 @@ class MagUKF():
         return np.asarray(_new_sensor_ukf)
 
     def run(self, sensor_, reference_, cov_sensor_, error_up=None, error_down=None):
-        # if error_up is not None and error_down is not None:
-        #     if len(self.historical['error']) > 0:
-        #         if abs(self.historical['error'][-1]) > error_up and not self.flag:
-        #             self.pCov_x = self.pCov_zero
-        #             self.flag = True
-        #         else:#if abs(self.historical['error'][-1]) <= error_down and self.flag:
-        #             self.flag = False
-
-        current_x = self.x_est.copy() # + np.random.normal(0, scale=[1, 1, 1, 1e-6, 1e-6, 1e-6, 1e-8, 1e-8, 1e-8]) * 1e-1
-
+        current_x = self.x_est.copy()
         self.lamda = self.alpha ** 2 * (self.n + self.kappa) - self.n
         self.gamma = np.sqrt(self.n + self.lamda)
         self.weights_mean, self.weights_cov = self.get_weights()
@@ -137,9 +389,8 @@ class MagUKF():
         # update
         # zero
         x_a = [wi * xi for wi, xi in zip(self.weights_mean, sigma_points)]
-        # x_a_sigma2 = [wi * xi for wi, xi in zip(self.weights_mean[1:], sigma_points_sigma2)]
 
-        x_k = np.sum(np.array(x_a), axis=0) # + np.sum(np.array(x_a_sigma2), axis=0)
+        x_k = np.sum(np.array(x_a), axis=0)
         p_cov_x = self.get_state_covariance(sigma_points)
 
         # sensor model
@@ -158,32 +409,14 @@ class MagUKF():
         self.x_est = x_k + kk_ @ np.atleast_1d(error_)
         # self.x_est[3:] = np.maximum(self.x_est[3:], 0)
         self.pCov_x = p_cov_x - kk_ @ p_zz @ kk_.T
-        if len(self.historical['error']) > 0 and error_up is not None and error_down is not None:
-            if abs(error_) > error_up and not self.flag:
-                # self.pCov_x[:3, :3] = self.pCov_zero[:3, :3]
-                self.pCov_x = self.pCov_x * 10
-                self.flag = True
-                print("After:", error_)
-            elif abs(error_) <= error_down and self.flag:
-                self.flag = False
-                print("low:", error_)
-        # if len(self.historical['error']) > 1:
-        #     self.alpha *= np.abs(error_ / self.historical['error'][-1]) ** 2
-        #     self.alpha = min(max(self.alpha, 1), 40)
-        #     print(self.alpha)
+        self.pCov_x = (self.pCov_x + self.pCov_x.T) * 0.5
         self.historical['error'].append(error_)
-        # fill matrix with diagonal
-        # self.pCov[:self.dim_x, :self.dim_x] = self.pCov_x
 
-    def get_state_covariance(self, sigma_points, sigma_points_2=None):
+    def get_state_covariance(self, sigma_points):
         px = np.zeros((self.dim_x, self.dim_x))
-        for i in range(len(sigma_points)):
-            x_ = sigma_points[i][:self.dim_x] - self.x_est[:self.dim_x]
-            px += self.weights_cov[i] * np.outer(x_, x_)
-        if sigma_points_2 is not None:
-            for i in range(len(sigma_points_2)):
-                x_ = sigma_points_2[i][:self.dim_x] - self.x_est[:self.dim_x]
-                px += self.weights_cov[i] * np.outer(x_, x_)
+        for i_ in range(len(sigma_points)):
+            x_ = sigma_points[i_][:self.dim_x] - self.x_est[:self.dim_x]
+            px += self.weights_cov[i_] * np.outer(x_, x_)
         return px
 
     def get_weights(self):
@@ -197,29 +430,20 @@ class MagUKF():
             weights_cov[i + 1] = 1 / (2 * (self.n + self.lamda))
         return weights_mean, weights_cov
 
-    def get_observation(self, sigma_points, mag_sensor_, sigma_points_2=None):
+    def get_observation(self, sigma_points, mag_sensor_):
         mean_y = 0
         mean_y_direct = []
-        for i in range(2 * self.n + 1):
-            mean_y_direct.append(error_measurement_model(mag_sensor_, sigma_points[i][:self.dim_x]))
-            mean_y += self.weights_mean[i] * mean_y_direct[-1]
-        if sigma_points_2 is not None:
-            for i in range(2 * self.n):
-                mean_y_direct.append(error_measurement_model(mag_sensor_, sigma_points_2[i][:self.dim_x]))
-                mean_y += self.weights_mean[i] * mean_y_direct[-1]
+        for i_ in range(2 * self.n + 1):
+            mean_y_direct.append(error_measurement_model(mag_sensor_, sigma_points[i_][:self.dim_x]))
+            mean_y += self.weights_mean[i_] * mean_y_direct[-1]
         return mean_y, np.atleast_2d(mean_y_direct).T
 
-    def get_cross_correlation_matrix(self, sigma_points, x_k_, z_k, sigma_z, sigma_points_sigma2=None):
+    def get_cross_correlation_matrix(self, sigma_points, x_k_, z_k, sigma_z):
         pxz = np.zeros((self.dim_x, 1))
-        for i in range(2 * self.n + 1):
-            dx = sigma_points[i][:self.dim_x] - x_k_
-            dz = sigma_z[i] - z_k
-            pxz += self.weights_cov[i] * np.outer(dx, dz)
-        if sigma_points_sigma2 is not None:
-            for i in range(2 * self.n):
-                dx = sigma_points_sigma2[i][:self.dim_x] - x_k_
-                dz = sigma_z[2 * self.n + 1 + i] - z_k
-                pxz += self.weights_cov[i] * np.outer(dx, dz)
+        for i_ in range(2 * self.n + 1):
+            dx = sigma_points[i_][:self.dim_x] - x_k_
+            dz = sigma_z[i_] - z_k
+            pxz += self.weights_cov[i_] * np.outer(dx, dz)
         return pxz
 
     def get_bias(self):
@@ -227,12 +451,12 @@ class MagUKF():
         sigma_ = np.array(self.historical['eigP'])[:, :3]
         return bias_, bias_ + sigma_ * 3, bias_ - sigma_ * 3
 
-    def get_output_covariance(self, sigma_points, x_k_, z_k, sigma_z, sigma_points_sigma2=None):
+    def get_output_covariance(self, sigma_points, x_k_, z_k, sigma_z):
         kmax, n = sigma_z.shape
         pzz = np.zeros((n, n))
-        for i in range(kmax):
-            dz = sigma_z[i] - z_k
-            pzz += self.weights_cov[i] * np.outer(dz, dz)
+        for i_ in range(kmax):
+            dz = sigma_z[i_] - z_k
+            pzz += self.weights_cov[i_] * np.outer(dz, dz)
         return pzz
 
     def get_calibration(self):
@@ -521,10 +745,10 @@ if __name__ == '__main__':
 
     # trmm_data = scipy.io.loadmat('../../tools/trmm_data.mat')
 
-    # b_true = [np.array([-50, 25, 10])] * len(time_array)
-    b_true = [np.array([-5.0, 2.5, 1.]) +
-              10 * np.array([-5.0, 2.5, 1.]) * np.min([(t_ - tend * 0.3) / 1000, 1]) if t_ >= tend * 0.3 else np.array([-5.0, 2.5, 1.]) for
-              t_ in time_array]
+    b_true = [np.array([-50, 25, 10])] * len(time_array)
+    # b_true = [np.array([-5.0, 2.5, 1.]) +
+    #           10 * np.array([-5.0, 2.5, 1.]) * np.min([(t_ - tend * 0.3) / 1000, 1]) if t_ >= tend * 0.3 else np.array([-5.0, 2.5, 1.]) for
+    #           t_ in time_array]
     b_true = np.array(b_true)
     D_true = np.array([[1.5, 0.00, 0.0], [0.00, 1.1, 0.0], [0.0, 0.0, 2.5]]) * 0.01
 
@@ -555,7 +779,9 @@ if __name__ == '__main__':
 
     ekf_cal = MagEKF()
     ekf_cal.pCov = P_est.copy()
-    ukf = MagUKF(alpha=1, beta=2)
+    D_est = np.zeros(6) + 1e-9
+    b_est = np.zeros(3) + 100
+    ukf = MagUKF(b_est, D_est, alpha=0.2, beta=2)
     ukf.pCov_x = P_est.copy()
     ukf.pCov_zero = P_est.copy()
     pso_est = PSOMagCalibration(pso_cost, n_particles=50)
@@ -589,7 +815,8 @@ if __name__ == '__main__':
         #       np.dot(mag_true[k], new_sensor[-1]) / np.linalg.norm(mag_true[k]) / np.linalg.norm(new_sensor[-1]))
 
     ekf_cal.plot(np.linalg.norm(np.asarray(new_sensor), axis=1), np.linalg.norm(mag_true, axis=1))
-    ukf.plot(np.linalg.norm(np.asarray(new_sensor_ukf), axis=1), np.linalg.norm(mag_true, axis=1))
+    ukf.plot(np.linalg.norm(np.asarray(new_sensor_ukf), axis=1),
+             np.linalg.norm(mag_true, axis=1), time_array, "./")
 
     # D_ekf_vector = ekf_cal.historical['scale'][-1]
     # b_ekf = ekf_cal.historical['bias'][-1]

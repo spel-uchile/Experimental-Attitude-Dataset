@@ -19,7 +19,7 @@ from src.kalman_filter.simulation_estimation import run_main_estimation
 from src.kalman_filter.ekf_mag_calibration import MagUKF
 from src.data_process import RealData
 from src.dynamics.quaternion import Quaternions
-from src.dynamics.dynamics_kinematics import Dynamics, _MJD_1858
+from src.dynamics.dynamics_kinematics import Dynamics, MJD_1858
 from tools.get_video_frame import save_frame
 from tools.get_point_vector_from_picture import get_vector_v2, ROT_CAM2BODY
 from tools.monitor import Monitor
@@ -32,8 +32,8 @@ mpl.rcParams['font.size'] = 12
 # CONFIG
 # PROJECT_FOLDER = "./data/20240804/"
 # PROJECT_FOLDER = "./data/M-20230824/"
-PROJECT_FOLDER = "./data/20230904/"
-# PROJECT_FOLDER = "./data/SimulationExample/"
+# PROJECT_FOLDER = "./data/20230904/"
+PROJECT_FOLDER = "./data/SimulationExample/"
 
 PROJECT_FOLDER = os.path.abspath(PROJECT_FOLDER) + "/"
 module_name = "dataconfig"
@@ -61,6 +61,10 @@ if "SIMULATION" in list(myconfig.__dict__):
 else:
     SIMULATION = False
 
+# VIEW
+SHOW_BASIC_PLOT = False
+SHOW_EKF_PLOT = False
+SHOW_VIDEO_PLOT = True
 VIDEO_FPS = 30
 VIDEO_DT = 1 / VIDEO_FPS
 if "VIDEO_FPS" in list(myconfig.__dict__):
@@ -75,7 +79,7 @@ FORCE_ESTIMATION = True
 #================================================#
 
 # long time prediction
-pred_step_sec = 10
+pred_step_sec = 1
 
 if __name__ == '__main__':
     # LOAD LAST RESULT ------------------------------------------------------------------------------------------------
@@ -89,10 +93,11 @@ if __name__ == '__main__':
     # REAL DATA and TIME ----------------------------------------------------------------------------------------------
     # create data with datetime, and near tle
     sensors = RealData(PROJECT_FOLDER, OBC_DATA)
-    # sensors.set_gyro_bias(-3.846, 0.1717, -0.6937, unit='deg')
+    #sensors.set_gyro_bias(-3.846, 0.1717, -0.6937, unit='deg')
     sensors.create_datetime_from_timestamp(TIME_FORMAT)
     # INERTIA definition
     inertia = np.array([37540.678, 38550.678, 6873.717, -0.0, -0.0, 0.0]) * 1e-6
+    inertia = np.array([38478.678, 38528.678, 6873.717, -0.0, -0.0, 0.0]) * 1e-6
     # inertia = sensors.estimate_inertia_matrix(guess=inertia)
     sensors.set_inertia(inertia)
     # show window time
@@ -135,32 +140,36 @@ if __name__ == '__main__':
             dynamic_orbital.update_attitude(np.array([0, 1, 1, 0]) / np.sqrt(2),
                                             np.array([-30 * np.deg2rad(1), -20 * np.deg2rad(1), 0.1]))
             sensors.create_sim_data(channels)
-        sensors.create_sim_video(channels, VIDEO_DATA, VIDEO_TIME_LAST_FRAME, VIDEO_FPS, VIDEO_CORRECTION_TIME)
+            sensors.create_sim_video(channels, VIDEO_DATA, VIDEO_TIME_LAST_FRAME, VIDEO_FPS, VIDEO_CORRECTION_TIME)
 
+        print(f"Gyro bias: [-0.07, -0.01, 0.04]")
     # dynamic_orbital.plot_gt(PROJECT_FOLDER + 'results/gt')
     # dynamic_orbital.plot_mag(PROJECT_FOLDER + 'results/mag_model_igrf13')
     # dynamic_orbital.plot_sun_sc(PROJECT_FOLDER + 'results/sun_pos_from_sc')
     # dynamic_orbital.plot_darkness(PROJECT_FOLDER + 'results/is_dark_sc')
 
     # sensors.data['is_dark'] = channels['is_dark']
-    sensors.plot_main_data(SIMULATION)
-    # calibrate gyro
-    # pcov_gyro = sensors.calibrate_gyro()
-    # print(pcov_gyro)
-    # sensors.plot_key(['acc_x', 'acc_y', 'acc_z'], color=['blue', 'orange', 'green'],
-    #                  name="cal_gyro_sensor_dps", title="Calibrate Gyro Sensor [rad/s]",
-    #                  label=['x [mG]', 'y [mG]', 'z [mG]', r'$||\cdot||$'], drawstyle=['steps-post'] * 4, marker=['.'] * 4,
-    #                  show=True)
+    if SHOW_BASIC_PLOT:
+        sensors.plot_main_data(SIMULATION)
+        # calibrate gyro
+        pcov_gyro = sensors.calibrate_gyro()
+        print(pcov_gyro)
+        sensors.plot_key(['acc_x', 'acc_y', 'acc_z'], color=['blue', 'orange', 'green'],
+                         name="cal_gyro_sensor_dps", title="Calibrate Gyro Sensor [rad/s]",
+                         label=['x [mG]', 'y [mG]', 'z [mG]', r'$||\cdot||$'], drawstyle=['steps-post'] * 4, marker=['.'] * 4,
+                         show=True)
 
     # calibration using two-step and channels
     mag_i_on_obc = [channels['mag_i'][np.argmin(np.abs(channels['full_time'] - jd_obc))] for jd_obc in sensors.data['jd']]
-    sensors.plot_mag_error(mag_i_on_obc, 'before')
+    if SHOW_BASIC_PLOT:
+        sensors.plot_mag_error(mag_i_on_obc, 'before')
     sensors.calibrate_mag(mag_i=np.array(mag_i_on_obc))
-    # sensors.plot_key(['mag_x', 'mag_y', 'mag_z', '||mag||'], color=['blue', 'orange', 'green', 'black'],
-    #                  name="mag_sensor_mg_two_step", title="TWO STEP Calibration - Mag", y_name='Magnetic field [mG]',
-    #                  label=['x', 'y', 'z', r'$||\cdot||$'], drawstyle=['steps-post'] * 4, marker=['.'] * 4)
-    # sensors.show_mag_geometry("TWO STEP Method")
-    # sensors.plot_mag_error(mag_i_on_obc, 'after')
+    if SHOW_BASIC_PLOT:
+        sensors.plot_key(['mag_x', 'mag_y', 'mag_z', '||mag||'], color=['blue', 'orange', 'green', 'black'],
+                         name="mag_sensor_mg_two_step", title="TWO STEP Calibration - Mag", y_name='Magnetic field [mG]',
+                         label=['x', 'y', 'z', r'$||\cdot||$'], drawstyle=['steps-post'] * 4, marker=['.'] * 4)
+        sensors.show_mag_geometry("TWO STEP Method")
+        sensors.plot_mag_error(mag_i_on_obc, 'after')
 
     # VIDEO -----------------------------------------------------------------------------------------------------------
     if CREATE_FRAME and VIDEO_DATA is not None:
@@ -207,7 +216,7 @@ if __name__ == '__main__':
                     rot_info['pitch'].append(p_)
                     rot_info['roll'].append(r_)
                     rot_info['timestamp'].append(ts_i - VIDEO_CORRECTION_TIME)
-                    rot_info['MJD'].append(timestamp_to_julian(ts_i - VIDEO_CORRECTION_TIME) - _MJD_1858)
+                    rot_info['MJD'].append(timestamp_to_julian(ts_i - VIDEO_CORRECTION_TIME) - MJD_1858)
                     e_b_ = ROT_CAM2BODY @ e_c_['Earth_c']
                     s_b_ = ROT_CAM2BODY @ e_c_['Sun_c']
 
@@ -231,7 +240,7 @@ if __name__ == '__main__':
             data_video_list[vide_name] = data_video
             earth_b_camera = data_video[['e_b_x', 'e_b_y', 'e_b_z']].values
             # start_str, stop_str, step, line1, line2, format_time
-            dynamic_video = Dynamics(jd_array=data_video['MJD'].values + _MJD_1858, line1=line1, line2=line2)
+            dynamic_video = Dynamics(jd_array=data_video['MJD'].values + MJD_1858, line1=line1, line2=line2)
             if os.path.exists(VIDEO_FOLDER + "results/" + "channels_camera.p") and not FORCE_CALCULATION:
                 with open(VIDEO_FOLDER + "results/" + "channels_camera.p", 'rb') as fp:
                     channels_video = pickle.load(fp)
@@ -246,33 +255,39 @@ if __name__ == '__main__':
 
             channels_video_list[vide_name] = channels_video
 
-        #     dynamic_video.plot_gt(VIDEO_FOLDER + "results/" + 'gt_video')
-        #     dynamic_video.plot_mag(VIDEO_FOLDER + "results/" + 'mag_model_igrf13_video')
-        #     dynamic_video.plot_sun_sc(VIDEO_FOLDER + "results/" + 'sun_pos_from_sc_video')
-        #     dynamic_video.plot_earth_vector(VIDEO_FOLDER + "results/", earth_b_camera)
-        #     # earth_point_inertial = -dynamic_video.get_unit_vector("sat_pos_i")
-        #     sensors.plot_video_data(data_video, vide_name, VIDEO_FOLDER)
-        #
-        # sensors.plot_gt_full_videos(PROJECT_FOLDER + "/results/" + 'gt_plus_videos.png', channels, channels_video_list)
-        # sensors.plot_windows(PROJECT_FOLDER)
+            # if SHOW_VIDEO_PLOT:
+            #     dynamic_video.plot_gt(VIDEO_FOLDER + "results/" + 'gt_video')
+            #     dynamic_video.plot_mag(VIDEO_FOLDER + "results/" + 'mag_model_igrf13_video')
+            #     dynamic_video.plot_sun_sc(VIDEO_FOLDER + "results/" + 'sun_pos_from_sc_video')
+            #     dynamic_video.plot_earth_vector(VIDEO_FOLDER + "results/", earth_b_camera)
+            #     # earth_point_inertial = -dynamic_video.get_unit_vector("sat_pos_i")
+            #     sensors.plot_video_data(data_video, vide_name, VIDEO_FOLDER)
+
+        # if SHOW_VIDEO_PLOT:
+        #     sensors.plot_gt_full_videos(PROJECT_FOLDER + "/results/" + 'gt_plus_videos.png', channels, channels_video_list)
+        #     sensors.plot_windows(PROJECT_FOLDER)
 
     # ==================================================================================================================
     # UKF MAG CALIBRATION ----------------------------------------------------------------------------------------------
-    if ONLINE_MAG_CALIBRATION and False:
+    if not ONLINE_MAG_CALIBRATION:
         D_est = np.zeros(6) + 1e-9
-        b_est = np.zeros(3) + 50
-        ukf = MagUKF(b_est, D_est, alpha=0.2)
+        b_est = np.zeros(3) + 100
+        ukf = MagUKF(b_est, D_est, alpha=0.1)
         mag_raw = sensors.data[['mag_x', 'mag_y', 'mag_z']].values
         mag_ukf = ukf.calibrate(mag_i_on_obc, mag_raw)
         ukf.plot(np.linalg.norm(mag_ukf, axis=1), np.linalg.norm(mag_i_on_obc, axis=1), sensors.data['mjd'],
                  PROJECT_FOLDER + 'results/')
         sensors.data[['mag_x', 'mag_y', 'mag_z']] = mag_ukf
         sensors.data['||mag||'] = np.linalg.norm(mag_ukf, axis=1)
+
         sensors.plot_key(['mag_x', 'mag_y', 'mag_z', '||mag||'], color=['blue', 'orange', 'green', 'black'],
                          name="mag_sensor_mg_ukf", show=False, title="UKF Calibration - Mag [mG]",
                          label=['x [mG]', 'y [mG]', 'z [mG]', '||mag||'], drawstyle=['steps-post'] * 4, marker=['.'] * 4)
 
-    sensors.show_mag_geometry("UKF Method")
+        sensors.show_mag_geometry("UKF Method", show_plot=True)
+    sensors.plot_key(['mag_x', 'mag_y', 'mag_z', '||mag||'], color=['blue', 'orange', 'green', 'black'],
+                     name="mag_sensor_mg_ukf", show=False, title="UKF Calibration - Mag [mG]",
+                     label=['x [mG]', 'y [mG]', 'z [mG]', '||mag||'], drawstyle=['steps-post'] * 4, marker=['.'] * 4)
     # ----------------------------------------------------------------------------------------------
     # ==================================================================================================================
 
@@ -281,10 +296,19 @@ if __name__ == '__main__':
     # ==================================================================================================================
 
     if not os.path.exists(PROJECT_FOLDER + "estimation_results.pkl") or FORCE_ESTIMATION:
-        sigma_bias = 1e-6
-        sigma_omega = 1e-4
-        sigma_mag = 10
-        sigma_css = 50       # MEKF
+        if SIMULATION:
+            gain_sigma = 0.001
+            sigma_omega = 0.1 #np.deg2rad(0.005)
+            sigma_bias = 1e-2 #np.deg2rad(4.2e-3)
+            sigma_mag = 2.8
+            sigma_css = 10 #5 * 930 * (1 - np.cos(np.deg2rad(3.5)))       # MEKF
+        else:
+            sigma_bias = 1e-2
+            sigma_omega = 0.1
+            sigma_mag = 2.8
+            sigma_css = 20  # 930 * np.deg2rad(1.8) * 5      # MEKF
+        print(f"\nSigma values. bias: {sigma_bias}, omega: {sigma_omega}, mag: {sigma_mag}, css: {sigma_css}\n")
+
         ekf_channels, rmse_pred_error = run_main_estimation(inertia, channels, sensors, mag_i_on_obc,
                                                             max_samples=MAX_SAMPLES,
                                                             online_mag_calibration=ONLINE_MAG_CALIBRATION,
@@ -326,6 +350,26 @@ if __name__ == '__main__':
                          'error_w_true': sensors.data[['w_x', 'w_y', 'w_z']].values[:MAX_SAMPLES] - np.array(channels['omega_est'])}
         channels = {**channels, **channels_true}
 
+        error_gyro_std = np.std(channels['error_w_true'], axis=0)
+
+        if SHOW_EKF_PLOT:
+            fig = plt.figure()
+            plt.title("Absolute Angular velocity estimation error")
+            plt.plot(np.abs(channels['error_w_true']), '.-', alpha=0.7)
+            plt.ylabel("Angular velocity error [rad/s]")
+            plt.xlabel("Steps [s]")
+            plt.grid()
+            plt.legend([
+                f'x (std: {error_gyro_std[0]:.3f})',
+                f'y (std: {error_gyro_std[1]:.3f})',
+                f'z (std: {error_gyro_std[2]:.3f})'
+            ])
+            plt.xticks(rotation=15)
+            plt.ticklabel_format(useOffset=False)
+            plt.tight_layout()
+            plt.yscale('log')
+            fig.savefig(PROJECT_FOLDER + "results/" + "abs_error_gyro_est.png")
+
     # q_train = q_est[:int(0.1 * len(q_est))]
     # theta_r = np.arccos(q_train[:, 3]) * 2
     # quat_vec = q_train[:, :3] / np.sin(theta_r * 0.5)
@@ -335,49 +379,52 @@ if __name__ == '__main__':
 
     color_lists = ['blue', 'orange', 'green']
     name_lists = ['x', 'y', 'z']
-    fig = plt.figure()
-    plt.title("Magnetic field estimation error")
-    plt.plot(np.abs(error_mag), '.-', alpha=0.7)
-    plt.ylabel("Magnetic field [mG]")
-    plt.xlabel("Steps [s]")
-    plt.grid()
-    plt.legend([
-        f'x (std: {error_mag_std[0]:.2f})',
-        f'y (std: {error_mag_std[1]:.2f})',
-        f'z (std: {error_mag_std[2]:.2f})'
-    ])
-    plt.xticks(rotation=15)
-    plt.ticklabel_format(useOffset=False)
-    plt.tight_layout()
-    plt.yscale('log')
-    fig.savefig(PROJECT_FOLDER + "results/" + "error_mag_est.png")
-
-    fig = plt.figure()
-    plt.title(f"Predicted quaternion angular error (forward: {pred_step_sec})")
-    plt.ylabel("Angular error [deg]")
-    plt.xlabel("Steps [s]")
-    plt.plot(np.array(error_pred) * 180 / np.pi, '.-', alpha=0.7)
-    plt.grid()
-    plt.xticks(rotation=15)
-    plt.ticklabel_format(useOffset=False)
-    plt.tight_layout()
-    fig.savefig(PROJECT_FOLDER + "results/" + f"error_prediction_quat_{pred_step_sec}.png")
 
     fov = 48 * np.deg2rad(1) / 2
     view_of_moon = np.cos(fov)
     moon_sc_b = [Quaternions(ekf_q).frame_conv(vec_) for ekf_q, vec_ in zip(channels['q_est'], channels['moon_sc_i'])]
     moon_sc_b = np.asarray(moon_sc_b) / np.linalg.norm(moon_sc_b, axis=1).reshape(-1, 1)
 
-    fig, axes = plt.subplots(nrows=3, ncols=1, sharex=True)
-    fig.suptitle("Moon Position estimation @ BodyFrame")
-    axes[1].hlines(view_of_moon, channels['mjd'][0], channels['mjd'][-1], color='red')
-    for i in range(3):
-        axes[i].plot(channels['mjd'], moon_sc_b[:, i], '.-', color=color_lists[i], alpha=0.7)
-        axes[i].grid()
-        axes[i].set_ylabel(f"{name_lists[i]} [km]")
-    axes[2].set_xlabel("MJD")
-    plt.tight_layout()
-    fig.savefig(PROJECT_FOLDER + "results/" + f"moon_estimation_fov.png")
+
+    if SHOW_EKF_PLOT or True:
+        fig = plt.figure()
+        plt.title("Magnetic field estimation error")
+        plt.plot(np.abs(error_mag), '.-', alpha=0.7)
+        plt.ylabel("Magnetic field [mG]")
+        plt.xlabel("Steps [s]")
+        plt.grid()
+        plt.legend([
+            f'x (std: {error_mag_std[0]:.2f})',
+            f'y (std: {error_mag_std[1]:.2f})',
+            f'z (std: {error_mag_std[2]:.2f})'
+        ])
+        plt.xticks(rotation=15)
+        plt.ticklabel_format(useOffset=False)
+        plt.tight_layout()
+        plt.yscale('log')
+        fig.savefig(PROJECT_FOLDER + "results/" + "error_mag_est.png")
+
+        fig = plt.figure()
+        plt.title(f"Predicted quaternion angular error (forward: {pred_step_sec})")
+        plt.ylabel("Angular error [deg]")
+        plt.xlabel("Steps [s]")
+        plt.plot(np.array(error_pred) * 180 / np.pi, '.-', alpha=0.7)
+        plt.grid()
+        plt.xticks(rotation=15)
+        plt.ticklabel_format(useOffset=False)
+        plt.tight_layout()
+        fig.savefig(PROJECT_FOLDER + "results/" + f"error_prediction_quat_{pred_step_sec}.png")
+
+        fig, axes = plt.subplots(nrows=3, ncols=1, sharex=True)
+        fig.suptitle("Moon Position estimation @ BodyFrame")
+        axes[1].hlines(view_of_moon, channels['mjd'][0], channels['mjd'][-1], color='red')
+        for i in range(3):
+            axes[i].plot(channels['mjd'], moon_sc_b[:, i], '.-', color=color_lists[i], alpha=0.7)
+            axes[i].grid()
+            axes[i].set_ylabel(f"{name_lists[i]} [km]")
+        axes[2].set_xlabel("MJD")
+        plt.tight_layout()
+        fig.savefig(PROJECT_FOLDER + "results/" + f"moon_estimation_fov.png")
 
     # channels['q_est'] = [np.array([0, 0, 0, 1]) for elem in channels['sat_pos_i']]
 
@@ -388,45 +435,20 @@ if __name__ == '__main__':
     monitor.set_quaternion('q_est')
     monitor.set_sideral('sideral')
 
-    # sensors.plot_key(['mag_x'], color=['blue'], label=['x [mG]'])
-    # sensors.plot_key(['mag_y'], color=['orange'], label=['y [mG]'])
-    # sensors.plot_key(['mag_z'], color=['green'], label=['z [mG]'])
-    # sensors.plot_key(['sun3'], color=['blue'], label=['-x [mA]'])
-    # sensors.plot_key(['sun2'], color=['orange'], label=['-y [mA]'])
-    # sensors.plot_key(['sun4'], color=['green'], label=['-z [mA]'])
+    monitor.add_vector('sun_sc_i', color='yellow')
+    monitor.add_vector('mag_i', color='orange')
+    monitor.add_vector('moon_sc_i', color='white')
 
-    # monitor.add_vector('sun_sc_i', color='yellow')
-    # monitor.add_vector('mag_i', color='orange')
-    # monitor.add_vector('moon_sc_i', color='white')
-    #
-    # monitor.plot(x_dataset='full_time', y_dataset='mag_i')
-    # monitor.plot(x_dataset='full_time', y_dataset='lonlat')
-    # monitor.plot(x_dataset='full_time', y_dataset='sun_i_sc')
-    # monitor.plot(x_dataset='full_time', y_dataset='sat_pos_i')
-    monitor.plot(x_dataset='mjd_pred', y_dataset='q_i2b_pred', xname="MJD", yname="Quaternion i2b",
-                 title="Predicted Quaternion", legend_list=["x", "y", "z", "s"])
-    monitor.plot(x_dataset='mjd_pred', y_dataset='omega_b_pred', xname="MJD", yname="Angular velocity [rad/s]",
-                 title="Predicted Angular velocity", legend_list=["x", "y", "z"])
-    # ekf
-    monitor.plot(x_dataset='mjd', y_dataset='b_est', xname="MJD", yname="Bias [rad/s]",
-                 title="Gyroscope bias estimation", legend_list=["x", "y", "z"])
-    monitor.plot(x_dataset='mjd', y_dataset='q_est', xname="MJD", yname="Quaternion i2b",
-                 title="Quaternion estimation", legend_list=["x", "y", "z", "s"])
-    monitor.plot(x_dataset='mjd', y_dataset='omega_est', xname="MJD", yname="Angular velocity [rad/s]",
-                 title="Angular velocity estimation", legend_list=["x", "y", "z"])
-    monitor.plot(x_dataset='mjd', y_dataset='mag_est', xname="MJD", yname="Magnetic Field [mG]",
-                 title="Magnetometer UKF", legend_list=["x", "y", "z"])
-    # # monitor.plot(x_dataset='full_time', y_dataset='mag_est')
-    monitor.plot(x_dataset='mjd', y_dataset='sun_b_est')
-    monitor.plot(x_dataset='mjd', y_dataset='p_cov', xname="MJD", yname="Diagonal Covariance",
-                 title="State error covariance matrix", legend_list=[r"$\delta \theta_x$", r"$\delta \theta_y$",
-                                                                     r"$\delta \theta_z$", r"$\Delta b_x$", r"$\Delta b_y$", r"$\Delta b_z$"])
-    monitor.plot(x_dataset='mjd', y_dataset='q_lvlh2b', xname="MJD", yname="Quaternion LVLH2b",
-                 title="Quaternion estimation LVLH", legend_list=["x", "y", "z", "s"])
-    monitor.plot(x_dataset='mjd', y_dataset='ypr_lvlh2b', xname="MJD", yname="YPR LVLH2b",
-                 title="Yaw-Pitch-Roll estimation LVLH", legend_list=["yaw", "pitch", "roll"])
-    monitor.plot(x_dataset='mjd', y_dataset='earth_b_lvlh', xname="MJD", yname="Earth vector - BF",
-                 title="Earth vector estimate - BF from LVLH", legend_list=["x", "y", "z"])
+    monitor.plot_all()
+
+    if SHOW_BASIC_PLOT:
+        sensors.plot_key(['mag_x'], color=['blue'], label=['x [mG]'])
+        sensors.plot_key(['mag_y'], color=['orange'], label=['y [mG]'])
+        sensors.plot_key(['mag_z'], color=['green'], label=['z [mG]'])
+        sensors.plot_key(['sun3'], color=['blue'], label=['-x [mA]'])
+        sensors.plot_key(['sun2'], color=['orange'], label=['-y [mA]'])
+        sensors.plot_key(['sun4'], color=['green'], label=['-z [mA]'])
+
     if SIMULATION:
         monitor.plot(x_dataset='mjd', y_dataset='error_q_true', xname="MJD", yname="Quaternion Error [deg]", log_scale=False)
         monitor.plot(x_dataset='mjd', y_dataset='error_w_true', xname="MJD", yname="Ang. Velocity Error [rad/s]", log_scale=False)
@@ -434,24 +456,24 @@ if __name__ == '__main__':
     if GET_VECTOR_FROM_PICTURE:
         monitor.plot_video_performance()
 
-    fig_mag, axes_mag = plt.subplots(nrows=3, ncols=1, sharex=True)
-    fig_mag.suptitle("Magnetometer estimation @ BodyFrame")
-    for i in range(3):
-        axes_mag[i].step(channels['mjd'], np.array(channels['mag_est'])[:, i], '.-', color=color_lists[i], alpha=0.3)
-        axes_mag[i].grid()
-        axes_mag[i].set_ylabel(f"{name_lists[i]} [mG]")
-    axes_mag[2].set_xlabel("MJD")
-    plt.tight_layout()
-    fig_mag.savefig(PROJECT_FOLDER + "results/" + "magnetometer_estimation.png")
-
-    fig, axes = plt.subplots(nrows=3, ncols=1, sharex=True)
-    fig.suptitle("Coarse sun sensor estimation @ BodyFrame")
-    for i in range(3):
-        axes[i].step(channels['mjd'], np.array(channels['css_est'])[:, i], '.-', color=color_lists[i], alpha=0.3)
-        axes[i].grid()
-        axes[i].set_ylabel(f"{name_lists[i]} [mA]")
-    axes[2].set_xlabel("MJD")
-    plt.tight_layout()
-    fig.savefig(PROJECT_FOLDER + "results/" + "coarse_sun_sensor_estimation.png")
+    # fig_mag, axes_mag = plt.subplots(nrows=3, ncols=1, sharex=True)
+    # fig_mag.suptitle("Magnetometer estimation @ BodyFrame")
+    # for i in range(3):
+    #     axes_mag[i].step(channels['mjd'], np.array(channels['mag_est'])[:, i], '.-', color=color_lists[i], alpha=0.3)
+    #     axes_mag[i].grid()
+    #     axes_mag[i].set_ylabel(f"{name_lists[i]} [mG]")
+    # axes_mag[2].set_xlabel("MJD")
+    # plt.tight_layout()
+    # fig_mag.savefig(PROJECT_FOLDER + "results/" + "magnetometer_estimation.png")
+    #
+    # fig, axes = plt.subplots(nrows=3, ncols=1, sharex=True)
+    # fig.suptitle("Coarse sun sensor estimation @ BodyFrame")
+    # for i in range(3):
+    #     axes[i].step(channels['mjd'], np.array(channels['css_est'])[:, i], '.-', color=color_lists[i], alpha=0.3)
+    #     axes[i].grid()
+    #     axes[i].set_ylabel(f"{name_lists[i]} [mA]")
+    # axes[2].set_xlabel("MJD")
+    # plt.tight_layout()
+    # fig.savefig(PROJECT_FOLDER + "results/" + "coarse_sun_sensor_estimation.png")
     plt.show()
     #plt.close("all")

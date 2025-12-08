@@ -9,31 +9,6 @@ from tools.mathtools import *
 from .ekf import EKF
 
 
-def rodrigues_exp(omega_, dt_):
-    om_skew = skew(omega_)
-    w_norm = np.linalg.norm(omega_)
-    theta = w_norm * dt_  # ||ω||*dt
-    if w_norm < 1e-8:
-        return np.eye(3) - om_skew * dt_ - 0.5 * om_skew @ om_skew * dt_ ** 2
-
-    A = np.sin(theta) / w_norm
-    B = (1 - np.cos(theta))/(w_norm ** 2)
-    return np.eye(3) - A * om_skew + B * om_skew @ om_skew
-
-
-def left_jacobian_SO3(omega_, dt_):
-    # J_l(ωdt) = -I3 * dt + (1-cosθ)/ω^2 [ω]_x + (θ - sinθ)/ω^3 [ω]_x^2
-    w_norm = np.linalg.norm(omega_)
-    theta = w_norm * dt_  # ||ω||*dt
-    om_skew = skew(omega_)
-    if w_norm < 1e-8:
-        return np.eye(3) - 0.5*om_skew + (1/6.0) * (om_skew @ om_skew)
-
-    A = (1 - np.cos(theta))/(w_norm**2)
-    B = (theta - np.sin(theta))/(w_norm**3)
-
-    return - np.eye(3) * dt_ + A * om_skew - B * (om_skew @ om_skew)
-
 
 class MEKF(EKF):
     # https://ntrs.nasa.gov/api/citations/19960035754/downloads/19960035754.pdf

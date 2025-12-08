@@ -45,6 +45,9 @@ class Monitor:
             dataset = self.fft_dataset
         else:
             dataset = self.dataset
+
+        if x_dataset not in dataset or y_dataset not in dataset:
+            return None
         fig = plt.figure()
         plt.title(title if title is not None else y_dataset)
         plt.ylabel(yname)
@@ -102,29 +105,30 @@ class Monitor:
         plt.show(block=False)
 
     def plot_video_performance(self):
-        for key, data in self.video_dataset.items():
-            fig_picture, axes = plt.subplots(nrows=2, ncols=1, sharex=True)
-            axes[0].grid()
-            axes[1].grid()
-            axes[0].set_ylabel("Pitch [deg]")
-            axes[1].set_ylabel("Roll [deg]")
-            axes[0].set_xlabel("MJD")
-            axes[1].set_xlabel("MJD")
-            axes[0].plot(self.dataset['mjd'], np.array(self.dataset['ypr_lvlh2b'])[:, 1] * RAD2DEG, label="MEKF")
-            axes[1].plot(self.dataset['mjd'], np.array(self.dataset['ypr_lvlh2b'])[:, 2] * RAD2DEG, label="MEKF")
-
-            axes[0].plot(data['MJD'], data['pitch'] * RAD2DEG, 'o', label="CAM")
-            axes[1].plot(data['MJD'], data['roll'] * RAD2DEG, 'o', label="CAM")
-
-            axes[0].set_xlim(np.min(data['MJD']) - 1 / 86400, np.max(data['MJD']) + 1 / 86400)
-            axes[1].set_xlim(np.min(data['MJD']) - 1 / 86400, np.max(data['MJD']) + 1 / 86400)
-
-            axes[0].legend()
-            axes[1].legend()
-            plt.xticks(rotation=15)
-            plt.ticklabel_format(useOffset=False)
-            plt.tight_layout()
-            fig_picture.savefig(self.folder_save + f"{key} - ypr_estimation_lvlh.png")
+        # for key, data in self.video_dataset.items():
+        #     fig_picture, axes = plt.subplots(nrows=2, ncols=1, sharex=True)
+        #     axes[0].grid()
+        #     axes[1].grid()
+        #     axes[0].set_ylabel("Pitch [deg]")
+        #     axes[1].set_ylabel("Roll [deg]")
+        #     axes[0].set_xlabel("MJD")
+        #     axes[1].set_xlabel("MJD")
+        #     axes[0].plot(self.dataset['mjd'], np.array(self.dataset['ypr_lvlh2b'])[:, 1] * RAD2DEG, label="MEKF")
+        #     axes[1].plot(self.dataset['mjd'], np.array(self.dataset['ypr_lvlh2b'])[:, 2] * RAD2DEG, label="MEKF")
+        #
+        #     value_roll  = self.ensure_continuity(data['roll'] * RAD2DEG)
+        #     axes[0].plot(data['MJD'], data['pitch'] * RAD2DEG, 'o', label="CAM")
+        #     axes[1].plot(data['MJD'], value_roll, 'o', label="CAM")
+        #
+        #     axes[0].set_xlim(np.min(data['MJD']) - 1 / 86400, np.max(data['MJD']) + 1 / 86400)
+        #     axes[1].set_xlim(np.min(data['MJD']) - 1 / 86400, np.max(data['MJD']) + 1 / 86400)
+        #
+        #     axes[0].legend()
+        #     axes[1].legend()
+        #     plt.xticks(rotation=15)
+        #     plt.ticklabel_format(useOffset=False)
+        #     plt.tight_layout()
+        #     fig_picture.savefig(self.folder_save + f"{key} - ypr_estimation_lvlh.png")
 
         E = np.asarray(self.dataset['earth_b_est'], float)
         if E.dtype == object: E = np.stack(E)
@@ -192,3 +196,46 @@ class Monitor:
             plt.ticklabel_format(useOffset=False)
             plt.tight_layout()
             fig_sun_cam.savefig(self.folder_save + f"{key} - cam_mekf_sun_estimation_b.png")
+
+    @staticmethod
+    def ensure_continuity(value_ang):
+        new_value = [value_ang[0]]
+        for vl_ in value_ang[1:]:
+            diff_value = vl_ - new_value[-1]
+            if abs(diff_value) > 350:
+                new_value.append(vl_)
+            elif abs(diff_value) > 2 * min(abs(vl_), abs(new_value[-1])) * 0.8:
+                new_value.append(vl_ * np.sign(new_value[-1]))
+            else:
+                new_value.append(vl_)
+        return new_value
+
+    def plot_all(self):
+        # self.plot(x_dataset='full_time', y_dataset='mag_i')
+        # self.plot(x_dataset='full_time', y_dataset='lonlat')
+        # self.plot(x_dataset='full_time', y_dataset='sun_i_sc')
+        # self.plot(x_dataset='full_time', y_dataset='sat_pos_i')
+        # self.plot(x_dataset='mjd_pred', y_dataset='q_i2b_pred', xname="MJD", yname="Quaternion i2b",
+        #              title="Predicted Quaternion", legend_list=["x", "y", "z", "s"])
+        # self.plot(x_dataset='mjd_pred', y_dataset='omega_b_pred', xname="MJD", yname="Angular velocity [rad/s]",
+        #              title="Predicted Angular velocity", legend_list=["x", "y", "z"])
+        # ekf
+        self.plot(x_dataset='mjd', y_dataset='b_est', xname="MJD", yname="Bias [rad/s]",
+                     title="Gyroscope bias estimation", legend_list=["x", "y", "z"])
+        self.plot(x_dataset='mjd', y_dataset='q_est', xname="MJD", yname="Quaternion i2b",
+                     title="Quaternion estimation", legend_list=["x", "y", "z", "s"])
+        self.plot(x_dataset='mjd', y_dataset='omega_est', xname="MJD", yname="Angular velocity [rad/s]",
+                     title="Angular velocity estimation", legend_list=["x", "y", "z"])
+        # self.plot(x_dataset='mjd', y_dataset='mag_est', xname="MJD", yname="Magnetic Field [mG]",
+        #              title="Magnetometer UKF", legend_list=["x", "y", "z"])
+        # # # monitor.plot(x_dataset='full_time', y_dataset='mag_est')
+        # self.plot(x_dataset='mjd', y_dataset='sun_b_est')
+        # self.plot(x_dataset='mjd', y_dataset='p_cov', xname="MJD", yname="Diagonal Covariance",
+        #              title="State error covariance matrix", legend_list=[r"$\delta \theta_x$", r"$\delta \theta_y$",
+        #                                                                  r"$\delta \theta_z$", r"$\Delta b_x$", r"$\Delta b_y$", r"$\Delta b_z$"])
+        # self.plot(x_dataset='mjd', y_dataset='q_lvlh2b', xname="MJD", yname="Quaternion LVLH2b",
+        #              title="Quaternion estimation LVLH", legend_list=["x", "y", "z", "s"])
+        # self.plot(x_dataset='mjd', y_dataset='ypr_lvlh2b', xname="MJD", yname="YPR LVLH2b",
+        #              title="Yaw-Pitch-Roll estimation LVLH", legend_list=["yaw", "pitch", "roll"])
+        # self.plot(x_dataset='mjd', y_dataset='earth_b_lvlh', xname="MJD", yname="Earth vector - BF",
+        #              title="Earth vector estimate - BF from LVLH", legend_list=["x", "y", "z"])

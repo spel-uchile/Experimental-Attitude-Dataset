@@ -190,16 +190,16 @@ class EKF:
         new_P = (I_nn - self.kf_K @ H) @ new_P_k#   @ (I_nn - self.kf_K @ H).T + self.kf_K @ self.kf_R @ self.kf_K.T
         return new_P
 
-    def attitude_observer_model(self, new_x, vector_i) -> np.array:
+    def attitude_observer_model(self, new_x, vector_i) -> np.ndarray:
         pass
 
-    def attitude_discrete_model(self, x, torque_b, dt) -> np.array:
+    def attitude_discrete_model(self, x, torque_b, dt) -> np.ndarray:
         pass
 
-    def attitude_jacobian_model(self, x, dt) -> np.array:
+    def attitude_jacobian_model(self, x, dt) -> np.ndarray:
         pass
 
-    def noise_jacobian_model(self, x, dt) -> np.array:
+    def noise_jacobian_model(self, x, dt) -> np.ndarray:
         pass
 
 
