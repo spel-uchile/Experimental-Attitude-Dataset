@@ -6,6 +6,9 @@ Date: 04-12-2022
 import time
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
+
+from tools.mathtools import julian_to_datetime
 
 RAD2DEG = 180 / np.pi
 DEG2RAD = 1 / RAD2DEG
@@ -13,6 +16,7 @@ DEG2RAD = 1 / RAD2DEG
 
 class Monitor:
     def __init__(self, dataset, folder_save, video_dataset: dict=None):
+        self.timestamp_array = None
         self.dataset = dataset
         self.fft_dataset = {}
         self.datetime = self.dataset['DateTime']
@@ -33,7 +37,23 @@ class Monitor:
         self.q_i2b = self.dataset[name]
 
     def set_sideral(self, name):
-        self.sideral = self.dataset['sideral']
+        self.sideral = self.dataset[name]
+
+    def set_time(self, name):
+        if name in self.dataset:
+            self.timestamp_array = self.dataset[name]
+        else:
+            self.timestamp_array = np.array([julian_to_datetime(val_).timestamp() for val_ in self.dataset['full_time']])
+
+    def get_basic_dataframe(self):
+        data_frame = {'timestamp': self.timestamp_array,
+                      'sideral': self.sideral}
+        for i in range(4):
+            data_frame[f'q_i2b_{i}'] = np.array(self.q_i2b)[:, i]
+        for i in range(3):
+            data_frame[f'position_{i}'] = np.array(self.position)[:, i]
+
+        return pd.DataFrame(data_frame)
 
     def add_vector(self, name, color='white'):
         self.vectors[name] = {'data': self.dataset[name],
@@ -147,16 +167,16 @@ class Monitor:
             axes_earth_cam.set_xlabel("MJD")
             axes_earth_cam.set_ylabel("Unit vector [-]")
 
-            h_cx, = axes_earth_cam.plot(data['MJD'], data['e_b_x'], 'o', label=r'CAM: $e_{x,c}$')
-            h_cy, = axes_earth_cam.plot(data['MJD'], data['e_b_y'], 'o', label=r'CAM: $e_{y,c}$')
-            h_cz, = axes_earth_cam.plot(data['MJD'], data['e_b_z'], 'o', label=r'CAM: $e_{z,c}$')
+            h_cx, = axes_earth_cam.plot(data['MJD'], data['e_b_x'], 'o', label=r'CAM: $e_{x,b}$')
+            h_cy, = axes_earth_cam.plot(data['MJD'], data['e_b_y'], 'o', label=r'CAM: $e_{y,b}$')
+            h_cz, = axes_earth_cam.plot(data['MJD'], data['e_b_z'], 'o', label=r'CAM: $e_{z,b}$')
 
             h_tx, = axes_earth_cam.plot(self.dataset['mjd'], earth_unit_est[:, 0],
-                                        label=r'MEKF: $e_{x,c}$')
+                                        label=r'MEKF: $e_{x,b}$')
             h_ty, = axes_earth_cam.plot(self.dataset['mjd'], earth_unit_est[:, 1],
-                                        label=r'MEKF: $e_{y,c}$')
+                                        label=r'MEKF: $e_{y,b}$')
             h_tz, = axes_earth_cam.plot(self.dataset['mjd'], earth_unit_est[:, 2],
-                                        label=r'MEKF: $e_{z,c}$')
+                                        label=r'MEKF: $e_{z,b}$')
 
             h_tx.set_color(h_cx.get_color())
             h_ty.set_color(h_cy.get_color())
@@ -177,13 +197,13 @@ class Monitor:
             axes_sun_cam.set_xlabel("MJD")
             axes_sun_cam.set_ylabel("Unit vector [-]")
 
-            h_cx, = axes_sun_cam.plot(data['MJD'], data['s_b_x'], 'o', label=r'CAM: $s_{x,c}$')
-            h_cy, = axes_sun_cam.plot(data['MJD'], data['s_b_y'], 'o', label=r'CAM: $s_{y,c}$')
-            h_cz, = axes_sun_cam.plot(data['MJD'], data['s_b_z'], 'o', label=r'CAM: $s_{z,c}$')
+            h_cx, = axes_sun_cam.plot(data['MJD'], data['s_b_x'], 'o', label=r'CAM: $s_{x,b}$')
+            h_cy, = axes_sun_cam.plot(data['MJD'], data['s_b_y'], 'o', label=r'CAM: $s_{y,b}$')
+            h_cz, = axes_sun_cam.plot(data['MJD'], data['s_b_z'], 'o', label=r'CAM: $s_{z,b}$')
 
-            h_tx, = axes_sun_cam.plot(self.dataset['mjd'], sun_unit_est[:, 0], label=r'MEKF: $s_{x,c}$')
-            h_ty, = axes_sun_cam.plot(self.dataset['mjd'], sun_unit_est[:, 1], label=r'MEKF: $s_{y,c}$')
-            h_tz, = axes_sun_cam.plot(self.dataset['mjd'], sun_unit_est[:, 2], label=r'MEKF: $s_{z,c}$')
+            h_tx, = axes_sun_cam.plot(self.dataset['mjd'], sun_unit_est[:, 0], label=r'MEKF: $s_{x,b}$')
+            h_ty, = axes_sun_cam.plot(self.dataset['mjd'], sun_unit_est[:, 1], label=r'MEKF: $s_{y,b}$')
+            h_tz, = axes_sun_cam.plot(self.dataset['mjd'], sun_unit_est[:, 2], label=r'MEKF: $s_{z,b}$')
 
             h_tx.set_color(h_cx.get_color())
             h_ty.set_color(h_cy.get_color())
@@ -221,11 +241,11 @@ class Monitor:
         #              title="Predicted Angular velocity", legend_list=["x", "y", "z"])
         # ekf
         self.plot(x_dataset='mjd', y_dataset='b_est', xname="MJD", yname="Bias [rad/s]",
-                     title="Gyroscope bias estimation", legend_list=["x", "y", "z"])
+                  title="Gyroscope bias estimation", legend_list=["x", "y", "z"])
         self.plot(x_dataset='mjd', y_dataset='q_est', xname="MJD", yname="Quaternion i2b",
-                     title="Quaternion estimation", legend_list=["x", "y", "z", "s"])
+                  title="Quaternion estimation", legend_list=["x", "y", "z", "s"])
         self.plot(x_dataset='mjd', y_dataset='omega_est', xname="MJD", yname="Angular velocity [rad/s]",
-                     title="Angular velocity estimation", legend_list=["x", "y", "z"])
+                  title="Angular velocity estimation", legend_list=["x", "y", "z"])
         # self.plot(x_dataset='mjd', y_dataset='mag_est', xname="MJD", yname="Magnetic Field [mG]",
         #              title="Magnetometer UKF", legend_list=["x", "y", "z"])
         # # # monitor.plot(x_dataset='full_time', y_dataset='mag_est')

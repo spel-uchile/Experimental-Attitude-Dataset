@@ -5,11 +5,11 @@ To use this tool you must open and execute the file "main.py".
 ## Requirements
 ```shell
 # Create virtual environment
-python -m venv ps_venv
+python -m venv .ps_venv
 
 # Activate virtual environment
 # Unix
-source ps_venv/bin/activate
+source .ps_venv/bin/activate
 
 # Windows
 ps_venv\Scripts\activate.bat

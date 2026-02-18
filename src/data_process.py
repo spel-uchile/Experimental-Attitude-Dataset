@@ -46,8 +46,8 @@ class RealData:
 
     def __init__(self, folder, file_directory):
         # Real data
-        self.sigma_v_omega = np.deg2rad(0.005)# np.deg2rad(0.2) # 1e-3  # gyro noise standard deviation [rad/s]
-        self.sigma_u_bias = np.deg2rad(4.2e-3) # 1e-4  # np.deg2rad(0.005) gyro random walk standard deviation [rad/s*s^0.5]
+        self.sigma_v_omega = np.deg2rad(0.3)# np.deg2rad(0.2) # 1e-3  # gyro noise standard deviation [rad/s]
+        self.sigma_u_bias = 1e-4 # np.deg2rad(4.2e-3) # 1e-4  # np.deg2rad(0.005) gyro random walk standard deviation [rad/s*s^0.5]
         self.std_rn_mag = 2.8  # magnetometer noise standard deviation [mG]
         self.I_nr_std_cos = np.deg2rad(1.8) # max cosine error [deg]
         self.I_max = 930 # Max expected value [mA]
@@ -272,7 +272,7 @@ class RealData:
         fig.legend(handles, labels, loc='center left', bbox_to_anchor=(0.85, 0.5), frameon=True)
         plt.subplots_adjust(right=0.84)
         fig.savefig(self.folder_path + "results/" + name + ".png", dpi=300)
-        plt.show() if show else plt.close(fig)
+        if not show: plt.close(fig)
 
         if len(to_plot) > 1:
             fig_ind, axes_ind = plt.subplots(len(to_plot), 1, figsize=(8.5, 5), sharex=True)
@@ -290,7 +290,7 @@ class RealData:
             plt.ticklabel_format(useOffset=False)
             plt.tight_layout()
             fig_ind.savefig(self.folder_path + "results/ind_" + name + ".png", dpi=300)
-            plt.show() if show else plt.close(fig)
+            if not show: plt.close(fig)
 
 
     def search_nearly_tle(self, sat_name: str):

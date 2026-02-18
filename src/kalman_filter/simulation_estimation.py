@@ -7,13 +7,11 @@ email: els.obrq@gmail.com
 import numpy as np
 from tqdm import tqdm
 from sklearn.metrics import mean_squared_error
-
-from src.kalman_filter.ekf_multy import MEKF
 from src.kalman_filter.mekf_obc import MEKF_OBC
 from src.kalman_filter.ekf_mag_calibration import MagUKF
 from src.dynamics.quaternion import Quaternions
 from src.data_process import RealData
-from tools.mathtools import get_lvlh2b
+from tools.mathtools import get_lvlh2b, triad_method, julian_to_datetime, devenports_q_method
 from src.dynamics.dynamics_kinematics import calc_quaternion, calc_omega_b, shadow_zone
 
 
@@ -28,7 +26,9 @@ def run_main_estimation(sc_inertia, channels, sensors: RealData, mag_i_on_obc, m
 
     aux_data = {'q_lvlh2b': [],
                 'ypr_lvlh2b': [],
-                'earth_b_lvlh': []}
+                'earth_b_lvlh': [],
+                'mag_ukf': [],
+                'sc_position': []}
 
     dt_obc = sensors.get_dt()
     omega_b = sensors.data[['acc_x', 'acc_y', 'acc_z']].values[0]
@@ -59,14 +59,30 @@ def run_main_estimation(sc_inertia, channels, sensors: RealData, mag_i_on_obc, m
     b_est = np.zeros(3) + 50
     ukf = MagUKF(b_est, D_est, alpha=0.2)
 
-    # q_i2b = Quaternions.get_from_two_v(channels['mag_i'][0], sensors.data[['mag_x_t', 'mag_y_t', 'mag_z_t']].values[0])()
-    q_i2b = np.array([0, 0, 0, 1])
+    q_i2b = Quaternions.get_from_two_v(channels['mag_i'][0], sensors.data[['mag_x', 'mag_y', 'mag_z']].values[0])()
+    # q_i2b = np.array([0.0, 0.0, 0.0, 1.0])
+    # unit_a_vector_b, unit_b_vect_b, unit_a_vector_i, unit_b_vector_i
+    unit_a_vector_b = sensors.data[['mag_x', 'mag_y', 'mag_z']].values[0]
+    unit_a_vector_b /= np.linalg.norm(unit_a_vector_b)
+
+    unit_b_vect_b = -sensors.data[['sun3', 'sun2', 'sun4']].values[0]
+    unit_b_vect_b[unit_b_vect_b > -50] = 0.0
+    unit_b_vect_b[unit_b_vect_b == 0.0] = 100
+    unit_b_vect_b /= np.linalg.norm(unit_b_vect_b)
+    unit_a_vector_i = channels['mag_i'][0] / np.linalg.norm(channels['mag_i'][0])
+    unit_b_vector_i = channels['sun_sc_i'][0] / np.linalg.norm(channels['sun_sc_i'][0])
+    # dcm_ = triad_method(unit_a_vector_b, unit_b_vect_b, unit_a_vector_i, unit_b_vector_i)
+
     # q_i2b = sensors.data[['q_i2b_x', 'q_i2b_y', 'q_i2b_z', 'q_i2b_r']].values[0]
+    q_ = devenports_q_method(0.5, 0.5, unit_a_vector_b, unit_b_vect_b, unit_a_vector_i, unit_b_vector_i)
+    q_i2b[:3] = q_[1:]
+    q_i2b[3] = q_[0]
+    q_i2b /= np.linalg.norm(q_i2b)
     # Save initial data
     ekf_model.set_quat(q_i2b, save=True)
     ekf_model.set_gyro_measure(omega_b)
     ekf_model.save_time(channels['mjd'][0])
-    ekf_model.save_vector(name='mag_est', vector=sensors.data[['mag_x', 'mag_y', 'mag_z']].values[0])
+    ekf_model.save_vector(name='mag_ref_est', vector=sensors.data[['mag_x', 'mag_y', 'mag_z']].values[0])
     ekf_model.save_vector(name='css_est', vector=sensors.data[['sun3', 'sun2', 'sun4']].values[0])
     ekf_model.save_vector(name='sun_b_est', vector=Quaternions(q_i2b).frame_conv(channels['sun_sc_i'][0]))
     ekf_model.save_vector(name='earth_b_est', vector=Quaternions(q_i2b).frame_conv(-channels['sat_pos_i'][0]))
@@ -81,6 +97,9 @@ def run_main_estimation(sc_inertia, channels, sensors: RealData, mag_i_on_obc, m
     aux_data['q_lvlh2b'].append(q_lvlhl_)
     aux_data['ypr_lvlh2b'].append(ypr_lvlh_)
     aux_data['earth_b_lvlh'].append(np.array([0, 0, 1]))
+    aux_data['mag_ukf'].append(sensors.data[['mag_x', 'mag_y', 'mag_z']].values[0])
+    aux_data['sc_position'].append(channels['sat_pos_i'][0])
+    aux_data['timestamp'] = np.array([julian_to_datetime(val_).timestamp() for val_ in channels['full_time'][:max_samples]])
 
     rng = enumerate(channels['full_time'][1:max_samples])
     if verbose:
@@ -95,9 +114,9 @@ def run_main_estimation(sc_inertia, channels, sensors: RealData, mag_i_on_obc, m
         sat_vel_i_ = channels['sat_vel_i'][ch_idx]
         sun_pos_i_ = channels['sun_i'][ch_idx]
         moon_pos_i_ = channels['moon_sc_i'][ch_idx]
-        # mag_body_vec_ = sensors.data[['mag_x', 'mag_y', 'mag_z']].values[ch_idx]
-        mag_body_vec_ = sensors.data[['mag_x_t', 'mag_y_t', 'mag_z_t']].values[ch_idx]
-        css_3_ = sensors.data[['sun3', 'sun2', 'sun4']].values[ch_idx]
+        mag_body_vec_ = sensors.data[['mag_x', 'mag_y', 'mag_z']].values[ch_idx]
+        # mag_body_vec_ = sensors.data[['mag_x_t', 'mag_y_t', 'mag_z_t']].values[ch_idx]
+        css_3_ = sensors.data[['sun3', 'sun2', 'sun4']].values[ch_idx] # 'sun3', 'sun2', 'sun4'
         # css_3_ = sensors.data[['sun3_t', 'sun2_t', 'sun4_t']].values[ch_idx]
         omega_gyro_ = sensors.data[['acc_x', 'acc_y', 'acc_z']].values[ch_idx]
         # omega_gyro_ = sensors.data[['w_x', 'w_y', 'w_z']].values[ch_idx]
@@ -134,19 +153,18 @@ def run_main_estimation(sc_inertia, channels, sensors: RealData, mag_i_on_obc, m
 
         # mag
         if online_mag_calibration:
-            mag_body_vec_ = ukf.calibrate([mag_ref_], [mag_body_vec_], mag_sig=3.8)
+            mag_body_vec_ = ukf.calibrate([mag_ref_], [mag_body_vec_], mag_sig=2.8)
 
-        mag_est = ekf_model.inject_vector(mag_body_vec_, mag_ref_, sigma2=mag_sig ** 2, sensor='mag')
-
+        mag_ref_est = ekf_model.inject_vector(mag_body_vec_, mag_ref_, sigma2=mag_sig ** 2, sensor='mag')
         # css
         css_est = np.zeros(3)
         is_dark = shadow_zone(sat_pos_i_, sun_pos_i_)
-        error_mag = np.linalg.norm(mag_est - mag_body_vec_)
+        error_mag = np.linalg.norm(mag_ref_est - mag_body_vec_)
         flag_css = True
 
         if not is_dark:  # and (error_mag < 200 or flag_css): # mG
             css_3_[css_3_ < 50] = 0.0
-            gains = sensors.I_max * np.eye(3)
+            gains = -sensors.I_max * np.eye(3)
             # gains[0, 0] *= -1
             # gains[2, 2] *= -1
 
@@ -158,7 +176,7 @@ def run_main_estimation(sc_inertia, channels, sensors: RealData, mag_i_on_obc, m
         e_b_est = Quaternions(ekf_model.current_quaternion).frame_conv(-sat_pos_i_)
 
         ekf_model.save_vector(name='css_est', vector=css_est)
-        ekf_model.save_vector(name='mag_est', vector=mag_est)
+        ekf_model.save_vector(name='mag_ref_est', vector=mag_ref_est)
         ekf_model.save_vector(name='sun_b_est', vector=Quaternions(ekf_model.current_quaternion).frame_conv(sun_sc_i_))
         ekf_model.save_vector(name='earth_b_est', vector=e_b_est)
         ekf_model.save_time(time_mjd)
@@ -172,7 +190,8 @@ def run_main_estimation(sc_inertia, channels, sensors: RealData, mag_i_on_obc, m
         aux_data['q_lvlh2b'].append(q_lvlh2b)
         aux_data['ypr_lvlh2b'].append(ypr_lvlh2b)
         aux_data['earth_b_lvlh'].append(Quaternions(q_lvlh2b).conjugate_class().frame_conv(e_b_est))
-
+        aux_data['mag_ukf'].append(mag_body_vec_)
+        aux_data['sc_position'].append(sat_pos_i_)
 
     error_pred = [(Quaternions(Quaternions(q_p).conjugate()) * Quaternions(q_kf)).get_angle(error_flag=True)
                   for q_p, q_kf in zip(prediction_dict['q_i2b_pred'][:-pred_step_sec],

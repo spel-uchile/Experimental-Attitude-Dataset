@@ -41,8 +41,6 @@ ROT_CAM2BODY = Rotation.from_euler('zx', [180, -90], degrees=True).inv().as_matr
 
 MAX_NUM_LINES = 3
 
-import numpy as np
-
 
 def R1(psi):
     """
@@ -266,35 +264,6 @@ def get_body(col_, file_name, show=True):
     return bw_temp
 
 
-def etiquetar_objetos(imagen):
-    # Inicializamos la matriz de etiquetas
-    etiquetas = np.zeros_like(imagen, dtype=int)
-    etiqueta_actual = 0
-
-    # Recorremos la imagen
-    for i in range(imagen.shape[0]):
-        for j in range(imagen.shape[1]):
-            # Si el pixel actual es parte de un objeto (no es cero)
-            # y aún no ha sido etiquetado, le asignamos una nueva etiqueta
-            if imagen[i, j] != 0 and etiquetas[i, j] == 0:
-                etiqueta_actual += 1
-                etiquetas[i, j] = etiqueta_actual
-
-                # Buscamos todos los otros pixeles conectados a este
-                # y les asignamos la misma etiqueta
-                pixeles_a_chequear = [(i, j)]
-                while pixeles_a_chequear:
-                    x, y = pixeles_a_chequear.pop()
-                    for dx in [-1, 0, 1]:
-                        for dy in [-1, 0, 1]:
-                            nx, ny = x + dx, y + dy
-                            if (0 <= nx < imagen.shape[0] and 0 <= ny < imagen.shape[1] and
-                                    imagen[nx, ny] != 0 and etiquetas[nx, ny] == 0):
-                                etiquetas[nx, ny] = etiqueta_actual
-                                pixeles_a_chequear.append((nx, ny))
-    return etiquetas, etiqueta_actual
-
-
 def metrics_for_contour(cnt, r, a_):
     P_ = cv2.arcLength(cnt, True)
     A_ = max(cv2.contourArea(cnt), 1e-9)
@@ -313,7 +282,7 @@ def get_type_radius(im_list):
 
     def f_2b(c, data):
         """ calculate the algebraic distance between the 2D points and the mean circle centered at c=(xc, yc) """
-        # TODO: revisar referencias de pixeles
+
         # c = [cv, ch]
         x = data[:, 1]
         y = data[:, 0]
@@ -540,10 +509,11 @@ def get_vector_v2(file_name, height_earth, height_sun, pixel_size_height, pixel_
             if (circ_ < 0.1 and arc_cov_ < 3.5 and 10 * max(bw_temp.shape) > radii[0] > 0.1 * max(bw_temp.shape) and radii[0] > 2 * radii[1]) and 'earth' not in last_tag:
                 height = height_earth
                 last_tag.append("earth")
-            elif (circ_ >= 0.1 and arc_cov_ > 2) and 'sun' not in last_tag and 2 * radii[1] < radii[0] < 10 * max(bw_temp.shape):
+            elif (circ_ >= 0.01 and arc_cov_ > 2) and 'sun' not in last_tag and 2 * radii[1] < radii[0] < 10 * max(bw_temp.shape):
                 height = height_sun
                 last_tag.append("sun")
             else:
+                print("NO RESULTS")
                 continue
             print("Radii: ", radii[0], "circ: ", circ_, "arc_cov: ", arc_cov_, "- tag: ", last_tag[-1])
             body_edge_array, body_vec_c, center_pixel, pitch_, roll_, s_major_a, s_minor_a, eccentricity = calc_conical_curvature(pl,
@@ -610,7 +580,7 @@ def get_vector_v2(file_name, height_earth, height_sun, pixel_size_height, pixel_
         plt.grid()
         plt.tight_layout()
         file_name = os.path.splitext(os.path.basename(file_name))[0]
-        fig_cv2.savefig("{}.png".format(folder_ + name_folder + f'/vec_bodies_' + file_name + ".png"), dpi=300)
+        fig_cv2.savefig("{}.png".format(folder_ + name_folder + f'/vec_bodies_' + file_name), dpi=300)
         plt.close()
         col = None
     except Exception as e:

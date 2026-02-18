@@ -191,6 +191,48 @@ def omega4kinematics(x_omega_b):
     return Omega
 
 
+def triad_method(unit_a_vector_b, unit_b_vect_b, unit_a_vector_i, unit_b_vector_i):
+    b_times = np.cross(unit_a_vector_b, unit_b_vect_b)
+    b_times /= np.linalg.norm(b_times)
+    r_times = np.cross(unit_a_vector_i, unit_b_vector_i)
+    r_times /= np.linalg.norm(r_times)
+    if np.linalg.norm(r_times) >= 1e-3:
+        # Triad frame @ body frame t1b: best model prediction (sun)
+        t1b = unit_a_vector_b
+        t2b = np.cross(unit_a_vector_b, unit_b_vect_b)
+        t2b /= np.linalg.norm(t2b)
+        t3b = np.cross(t1b, t2b)
+
+        # Triad frame @ inertial frame
+        t1r = unit_a_vector_i
+        t2r = np.cross(unit_a_vector_i, unit_b_vector_i)
+        t2r /= np.linalg.norm(t2r)
+        t3r = np.cross(t1r, t2r)
+        # Matrix construction
+
+        body2triad = np.array([t1b, t2b, t3b]).T
+        inertial2triad = np.array([t1r, t2r, t3r]).T
+        triad_dcm_attitude = body2triad.dot(inertial2triad.T)
+        return triad_dcm_attitude
+    return np.eye(3)
+
+
+def devenports_q_method(a1, a2, unit_a_vector_b, unit_b_vect_b, unit_a_vector_i, unit_b_vector_i):
+    B = a1 * np.outer(unit_a_vector_b, unit_a_vector_i) + a2 * np.outer(unit_b_vect_b, unit_b_vector_i)
+    sigma = np.trace(B)
+    S = B + B.T
+    z = np.array([B[1, 2] - B[2, 1], B[2, 0] - B[0, 2], B[0, 1] - B[1, 0]])
+    K = np.zeros((4, 4))
+    K[0, 0] = sigma
+    K[1:, 0] = z.T
+    K[0, 1:] = z
+    K[1:, 1:] = S - np.identity(3) * sigma
+    eig_val, eig_vec = np.linalg.eig(K)
+    max_eig = np.argmax(eig_val)
+    quat = eig_vec.T[max_eig]
+    return quat
+
+
 def get_mrp_from_q(q):
     p = q[:3]/(1 + q[3])
     if np.linalg.norm(p) > 1:

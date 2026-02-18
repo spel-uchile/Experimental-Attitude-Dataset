@@ -11,7 +11,10 @@ from tools.mathtools import *
 class MEKF_OBC:
     """
 
-    # https://ntrs.nasa.gov/api/citations/19960035754/downloads/19960035754.pdf
+    https://ntrs.nasa.gov/api/citations/19960035754/downloads/19960035754.pdf
+    https://arxiv.org/pdf/1711.02508
+    https://arxiv.org/pdf/2110.13666
+    https://mars.cs.umn.edu/tr/reports/Trawny05b.pdf
     """
 
     def __init__(self, cov_state):
@@ -42,7 +45,7 @@ class MEKF_OBC:
         self.gamma = 0
 
         self.bias_model = None #"GM"
-        self.historical = {'mjd_ekf':[], 'q_est': [], 'b_est': [np.zeros(3)], 'mag_est': [], 'omega_est': [],
+        self.historical = {'mjd_ekf':[], 'q_est': [], 'b_est': [np.zeros(3)], 'mag_ref_est': [], 'omega_est': [],
                            'p_cov': [np.diag(self.covariance_P)], 'css_est': [], 'sun_b_est': [], 'earth_b_est': []}
 
     def propagate(self, step):
@@ -117,7 +120,7 @@ class MEKF_OBC:
         omega = self.omega_state - self.current_bias
         self.current_quaternion = self.attitude_discrete(self.current_quaternion, omega, step)
         new_x_k = np.zeros(6)
-        new_p_k = self.propagate_cov_P(step, omega)
+        new_p_k = self.propagate_cov_P_full(step, omega)
         return new_x_k, new_p_k
 
     def propagate_cov_P_sim(self, step, omega):
@@ -288,14 +291,15 @@ class MEKF_OBC:
         return new_x
 
     def reset_state(self):
-        dot_error = (self.internal_state[:3] @ self.internal_state[:3]) * 0.25
+        d_theta = self.internal_state[:3]
+        d_quat = 0.5 * d_theta
+        dot_error = d_quat @ d_quat
+
         temp = 1 / np.sqrt(1 + dot_error)
-        # if dot_error < 1:
-        #     error_q = Quaternions(np.array([*self.internal_state[:3] * 0.5,
-        #                                     np.sqrt(1 - dot_error)]))
-        # else:
-        error_q = Quaternions(np.array([*self.internal_state[:3] * 0.5,
-                                        1]) * temp)
+        if dot_error > 1:
+            error_q = Quaternions(np.array([*d_quat, 1]) * temp)
+        else:
+            error_q = Quaternions(np.array([*d_quat, np.sqrt(1 - dot_error)]))
         #
         # ================================================================
         # dot_error = self.internal_state[:3] @ self.internal_state[:3]
@@ -309,7 +313,7 @@ class MEKF_OBC:
         # diff = error_q * Quaternions(self.current_quaternion)
         # current_quaternion = error_q * Quaternions(self.current_quaternion)
 
-        current_quaternion =  Quaternions(self.current_quaternion)  * error_q
+        current_quaternion =  Quaternions(self.current_quaternion) * error_q
         current_quaternion.normalize()
         self.current_quaternion = current_quaternion()
         self.current_bias += self.internal_state[3:]

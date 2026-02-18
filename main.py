@@ -32,8 +32,8 @@ mpl.rcParams['font.size'] = 12
 # CONFIG
 # PROJECT_FOLDER = "./data/20240804/"
 # PROJECT_FOLDER = "./data/M-20230824/"
-# PROJECT_FOLDER = "./data/20230904/"
-PROJECT_FOLDER = "./data/SimulationExample/"
+PROJECT_FOLDER = "./data/20230904/"
+# PROJECT_FOLDER = "./data/SimulationExample/"
 
 PROJECT_FOLDER = os.path.abspath(PROJECT_FOLDER) + "/"
 module_name = "dataconfig"
@@ -72,14 +72,14 @@ if "VIDEO_FPS" in list(myconfig.__dict__):
     VIDEO_DT = 1 / VIDEO_FPS
 
 # samples. None to use all the samples.
-MAX_SAMPLES = 300
+MAX_SAMPLES = 500
 #================================================#
 FORCE_CALCULATION = myconfig.FORCE_CALCULATION
 FORCE_ESTIMATION = True
 #================================================#
 
 # long time prediction
-pred_step_sec = 1
+pred_step_sec = 30
 
 if __name__ == '__main__':
     # LOAD LAST RESULT ------------------------------------------------------------------------------------------------
@@ -140,7 +140,7 @@ if __name__ == '__main__':
             dynamic_orbital.update_attitude(np.array([0, 1, 1, 0]) / np.sqrt(2),
                                             np.array([-30 * np.deg2rad(1), -20 * np.deg2rad(1), 0.1]))
             sensors.create_sim_data(channels)
-            sensors.create_sim_video(channels, VIDEO_DATA, VIDEO_TIME_LAST_FRAME, VIDEO_FPS, VIDEO_CORRECTION_TIME)
+        sensors.create_sim_video(channels, VIDEO_DATA, VIDEO_TIME_LAST_FRAME, VIDEO_FPS, VIDEO_CORRECTION_TIME)
 
         print(f"Gyro bias: [-0.07, -0.01, 0.04]")
     # dynamic_orbital.plot_gt(PROJECT_FOLDER + 'results/gt')
@@ -192,8 +192,9 @@ if __name__ == '__main__':
             if not os.path.exists(VIDEO_FOLDER + "results/"):
                 os.makedirs(VIDEO_FOLDER + "results/")
             if not os.path.exists(VIDEO_FOLDER + "results/" + f'pitch_roll_LVLH_{vide_name}.xlsx'):
-                list_file = [elem for elem in os.listdir(VIDEO_FOLDER + "/frames/") if 'png' in elem]
-                frame_shape = cv2.imread(VIDEO_FOLDER + "/frames/" + list_file[0]).shape
+                path_frame = VIDEO_FOLDER + "/frames/"
+                list_file = [elem for elem in os.listdir(path_frame) if 'png' in elem]
+                frame_shape = cv2.imread(path_frame + list_file[0]).shape
                 num_list = [float(elem[:-4]) for elem in list_file if 'png' in elem]
                 datalist = pd.DataFrame({'filename': list_file, 'id': num_list})
                 datalist.sort_values(by='id', inplace=True)
@@ -211,7 +212,7 @@ if __name__ == '__main__':
                     #1693838934.3
                     height_e = dynamic_orbital.get_altitude(ts_i)
                     height_sun = dynamic_orbital.get_distance_sun(ts_i)
-                    edge_, img_cv2_, p_, r_, e_c_ = get_vector_v2(VIDEO_FOLDER + "/frames/" + filename, height_e,
+                    edge_, img_cv2_, p_, r_, e_c_ = get_vector_v2(path_frame + filename, height_e,
                                                                   height_sun, pixel_size_height, pixel_size_width, focal_length)
                     rot_info['pitch'].append(p_)
                     rot_info['roll'].append(r_)
@@ -236,7 +237,7 @@ if __name__ == '__main__':
                 data_video = pd.read_excel(VIDEO_FOLDER + "results/" + f'pitch_roll_LVLH_{vide_name}.xlsx')
 
             if SIMULATION:
-                data_video['MJD'] += 0.5 / 86400 # check with dataconfig
+                data_video['MJD'] += VIDEO_CORRECTION_TIME / 86400 # check with dataconfig
             data_video_list[vide_name] = data_video
             earth_b_camera = data_video[['e_b_x', 'e_b_y', 'e_b_z']].values
             # start_str, stop_str, step, line1, line2, format_time
@@ -285,9 +286,9 @@ if __name__ == '__main__':
                          label=['x [mG]', 'y [mG]', 'z [mG]', '||mag||'], drawstyle=['steps-post'] * 4, marker=['.'] * 4)
 
         sensors.show_mag_geometry("UKF Method", show_plot=True)
-    sensors.plot_key(['mag_x', 'mag_y', 'mag_z', '||mag||'], color=['blue', 'orange', 'green', 'black'],
-                     name="mag_sensor_mg_ukf", show=False, title="UKF Calibration - Mag [mG]",
-                     label=['x [mG]', 'y [mG]', 'z [mG]', '||mag||'], drawstyle=['steps-post'] * 4, marker=['.'] * 4)
+        sensors.plot_key(['mag_x', 'mag_y', 'mag_z', '||mag||'], color=['blue', 'orange', 'green', 'black'],
+                         name="mag_sensor_mg_ukf", show=False, title="UKF Calibration - Mag [mG]",
+                         label=['x [mG]', 'y [mG]', 'z [mG]', '||mag||'], drawstyle=['steps-post'] * 4, marker=['.'] * 4)
     # ----------------------------------------------------------------------------------------------
     # ==================================================================================================================
 
@@ -297,16 +298,17 @@ if __name__ == '__main__':
 
     if not os.path.exists(PROJECT_FOLDER + "estimation_results.pkl") or FORCE_ESTIMATION:
         if SIMULATION:
-            gain_sigma = 0.001
-            sigma_omega = 0.1 #np.deg2rad(0.005)
-            sigma_bias = 1e-2 #np.deg2rad(4.2e-3)
+            gain_sigma = 1
+            sigma_omega = gain_sigma * np.deg2rad(0.3) # 0.01 # V
+            sigma_bias = 1e-4 # gain_sigma * np.deg2rad(4.2e-3) # 1e-3 # U
             sigma_mag = 2.8
             sigma_css = 10 #5 * 930 * (1 - np.cos(np.deg2rad(3.5)))       # MEKF
         else:
-            sigma_bias = 1e-2
-            sigma_omega = 0.1
-            sigma_mag = 2.8
-            sigma_css = 20  # 930 * np.deg2rad(1.8) * 5      # MEKF
+            gain_sigma = 0.5
+            sigma_omega = gain_sigma * np.deg2rad(0.3) # 0.01 #
+            sigma_bias = gain_sigma * 1e-4  # 1e-3
+            sigma_mag = 5
+            sigma_css = 930 * (1 - np.cos(np.deg2rad(3.5)))      # MEKF
         print(f"\nSigma values. bias: {sigma_bias}, omega: {sigma_omega}, mag: {sigma_mag}, css: {sigma_css}\n")
 
         ekf_channels, rmse_pred_error = run_main_estimation(inertia, channels, sensors, mag_i_on_obc,
@@ -318,8 +320,8 @@ if __name__ == '__main__':
                                                             mag_sig=sigma_mag,
                                                             css_sig=sigma_css)
         
-        error_mag_rmse = mean_squared_error(np.linalg.norm(ekf_channels['mag_est'], axis=1),
-                                            np.linalg.norm(sensors.data[['mag_x', 'mag_y', 'mag_z']].values[:MAX_SAMPLES], axis=1))
+        error_mag_rmse = mean_squared_error(np.linalg.norm(ekf_channels['mag_ref_est'], axis=1),
+                                            np.linalg.norm(ekf_channels['mag_ukf'], axis=1))
         print("Error prediction:", rmse_pred_error, "Erros RMSE MAG: ", error_mag_rmse)
         with open(PROJECT_FOLDER + 'estimation_results.pkl', 'wb') as file_:
             pickle.dump(ekf_channels, file_)
@@ -333,7 +335,7 @@ if __name__ == '__main__':
     channels = {k: v[:MAX_SAMPLES] for k, v in channels_temp.items()}
 
     channels = {**channels, **ekf_channels}
-    error_mag = channels['mag_est'] - sensors.data[['mag_x', 'mag_y', 'mag_z']].values[:MAX_SAMPLES]
+    error_mag = np.array(channels['mag_ref_est']) - np.array(channels['mag_ukf'])
     error_pred = channels['error_pred']
 
     q_est = np.array(channels['q_est'])
@@ -434,6 +436,9 @@ if __name__ == '__main__':
     monitor.set_position('sat_pos_i')
     monitor.set_quaternion('q_est')
     monitor.set_sideral('sideral')
+    monitor.set_time("timestamp")
+    df_basic = monitor.get_basic_dataframe()
+    df_basic.to_csv(PROJECT_FOLDER + "results/" + "basic_data_to_view3d.csv")
 
     monitor.add_vector('sun_sc_i', color='yellow')
     monitor.add_vector('mag_i', color='orange')
@@ -441,13 +446,14 @@ if __name__ == '__main__':
 
     monitor.plot_all()
 
-    if SHOW_BASIC_PLOT:
-        sensors.plot_key(['mag_x'], color=['blue'], label=['x [mG]'])
-        sensors.plot_key(['mag_y'], color=['orange'], label=['y [mG]'])
-        sensors.plot_key(['mag_z'], color=['green'], label=['z [mG]'])
-        sensors.plot_key(['sun3'], color=['blue'], label=['-x [mA]'])
-        sensors.plot_key(['sun2'], color=['orange'], label=['-y [mA]'])
-        sensors.plot_key(['sun4'], color=['green'], label=['-z [mA]'])
+    if SHOW_BASIC_PLOT or True:
+        monitor.plot('mjd', 'mag_ukf', xname="MJD", yname="Magnetic Field [mG]", title="ukf_mag_res")
+        sensors.plot_key(['mag_x'], name='mag_x', color=['blue'], label=['x [mG]'], show=True)
+        sensors.plot_key(['mag_y'], name='mag_y', color=['orange'], label=['y [mG]'], show=True)
+        sensors.plot_key(['mag_z'], name='mag_z', color=['green'], label=['z [mG]'], show=True)
+        sensors.plot_key(['sun3'], name='sun3', color=['blue'], label=['-x [mA]'], show=True)
+        sensors.plot_key(['sun2'], name='sun2', color=['orange'], label=['-y [mA]'], show=True)
+        sensors.plot_key(['sun4', 'sun3'], name='sun4', color=['blue', 'green'], label=['-z [mA]', '-x [mA]'], show=True)
 
     if SIMULATION:
         monitor.plot(x_dataset='mjd', y_dataset='error_q_true', xname="MJD", yname="Quaternion Error [deg]", log_scale=False)
