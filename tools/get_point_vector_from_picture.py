@@ -174,7 +174,8 @@ def get_body(col_, file_name, show=True):
             new_col[blue_no_black] = lighter_colors[0]
     #
     col = col_.copy()
-    col.putdata([tuple(colors) for colors in new_col.reshape(-1, 3)])
+    processed_colors = new_col.clip(0, 255).astype(np.uint8).reshape(-1, 3)
+    col.putdata([tuple(colors) for colors in processed_colors])
 
     gray = col.convert('L')
     # gray = np.asarray(col)[:, :, 2]

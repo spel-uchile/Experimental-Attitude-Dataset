@@ -13,7 +13,6 @@ import numpy as np
 import datetime
 import functools
 import cv2
-from future.backports.http.cookiejar import debug
 from tqdm import tqdm
 from matplotlib.patches import Rectangle
 import matplotlib.pyplot as plt

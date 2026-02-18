@@ -18,3 +18,5 @@ QtPy
 Cartopy
 rich
 tqdm
+jplephem
+openpyxl

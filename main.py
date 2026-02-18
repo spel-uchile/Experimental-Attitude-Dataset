@@ -34,6 +34,8 @@ mpl.rcParams['font.size'] = 12
 # PROJECT_FOLDER = "./data/M-20230824/"
 PROJECT_FOLDER = "./data/20230904/"
 # PROJECT_FOLDER = "./data/SimulationExample/"
+PROJECT_FOLDER = "./data/20231113/"
+
 
 PROJECT_FOLDER = os.path.abspath(PROJECT_FOLDER) + "/"
 module_name = "dataconfig"
@@ -235,6 +237,7 @@ if __name__ == '__main__':
                 data_video.to_excel(VIDEO_FOLDER + "results/" + f'pitch_roll_LVLH_{vide_name}.xlsx', index=False)
             else:
                 data_video = pd.read_excel(VIDEO_FOLDER + "results/" + f'pitch_roll_LVLH_{vide_name}.xlsx')
+                data_video['MJD'] += VIDEO_CORRECTION_TIME / 86400
 
             if SIMULATION:
                 data_video['MJD'] += VIDEO_CORRECTION_TIME / 86400 # check with dataconfig
@@ -298,16 +301,16 @@ if __name__ == '__main__':
 
     if not os.path.exists(PROJECT_FOLDER + "estimation_results.pkl") or FORCE_ESTIMATION:
         if SIMULATION:
-            gain_sigma = 1
+            gain_sigma = 1.0
             sigma_omega = gain_sigma * np.deg2rad(0.3) # 0.01 # V
             sigma_bias = 1e-4 # gain_sigma * np.deg2rad(4.2e-3) # 1e-3 # U
             sigma_mag = 2.8
-            sigma_css = 10 #5 * 930 * (1 - np.cos(np.deg2rad(3.5)))       # MEKF
+            sigma_css = 10.0 #5 * 930 * (1 - np.cos(np.deg2rad(3.5)))       # MEKF
         else:
             gain_sigma = 0.5
             sigma_omega = gain_sigma * np.deg2rad(0.3) # 0.01 #
             sigma_bias = gain_sigma * 1e-4  # 1e-3
-            sigma_mag = 5
+            sigma_mag = 5.0
             sigma_css = 930 * (1 - np.cos(np.deg2rad(3.5)))      # MEKF
         print(f"\nSigma values. bias: {sigma_bias}, omega: {sigma_omega}, mag: {sigma_mag}, css: {sigma_css}\n")
 

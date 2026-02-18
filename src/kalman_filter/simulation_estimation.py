@@ -62,12 +62,12 @@ def run_main_estimation(sc_inertia, channels, sensors: RealData, mag_i_on_obc, m
     q_i2b = Quaternions.get_from_two_v(channels['mag_i'][0], sensors.data[['mag_x', 'mag_y', 'mag_z']].values[0])()
     # q_i2b = np.array([0.0, 0.0, 0.0, 1.0])
     # unit_a_vector_b, unit_b_vect_b, unit_a_vector_i, unit_b_vector_i
-    unit_a_vector_b = sensors.data[['mag_x', 'mag_y', 'mag_z']].values[0]
+    unit_a_vector_b = sensors.data[['mag_x', 'mag_y', 'mag_z']].values[0].astype(float)
     unit_a_vector_b /= np.linalg.norm(unit_a_vector_b)
 
-    unit_b_vect_b = -sensors.data[['sun3', 'sun2', 'sun4']].values[0]
-    unit_b_vect_b[unit_b_vect_b > -50] = 0.0
-    unit_b_vect_b[unit_b_vect_b == 0.0] = 100
+    unit_b_vect_b = -sensors.data[['sun3', 'sun2', 'sun4']].values[0].astype(float)
+    unit_b_vect_b[unit_b_vect_b > -50.0] = 0.0
+    unit_b_vect_b[unit_b_vect_b == 0.0] = 100.0
     unit_b_vect_b /= np.linalg.norm(unit_b_vect_b)
     unit_a_vector_i = channels['mag_i'][0] / np.linalg.norm(channels['mag_i'][0])
     unit_b_vector_i = channels['sun_sc_i'][0] / np.linalg.norm(channels['sun_sc_i'][0])
