@@ -13,14 +13,7 @@ from sklearn.metrics import mean_squared_error
 import seaborn as sns
 import pandas as pd
 from tqdm import tqdm
-from tools.pso import PSOMagCalibration
 from scipy.linalg import cholesky
-
-
-def pso_cost(x_est, mag_sensor_, mag_ref):
-    hk = error_measurement_model(mag_sensor_, x_est)
-    zk = np.linalg.norm(mag_sensor_) ** 2 - np.linalg.norm(mag_ref) ** 2
-    return (zk - hk) ** 2
 
 
 def error_measurement_model(mag_sensor_, x_est):
@@ -784,15 +777,9 @@ if __name__ == '__main__':
     ukf = MagUKF(b_est, D_est, alpha=0.2, beta=2)
     ukf.pCov_x = P_est.copy()
     ukf.pCov_zero = P_est.copy()
-    pso_est = PSOMagCalibration(pso_cost, n_particles=50)
-    pso_est.initialize([[-50, 50],
-                        [-50, 50],
-                        [-50, 50],
-                        [-10, 10], [-10, 10], [-10, 10],
-                        [-1, 1], [-1, 1], [-1, 1]])
+
     new_sensor = []
     new_sensor_ukf = []
-    new_sensor_pso = []
     cov_sensor = std_measure ** 2
 
     for k in range(len(time_array)):
@@ -802,17 +789,12 @@ if __name__ == '__main__':
 
         ekf_cal.run(mag_sensor[k], mag_true[k], cov_sensor)
         ukf.run(mag_sensor[k], mag_true[k], cov_sensor, 150, 100)
-        # pso_est.optimize(mag_sensor[k], mag_true[k], clip=False)
 
         bias_, D_scale = ekf_cal.get_calibration()
         bias_ukf, D_scale_ukf = ukf.get_calibration()
-        # bias_pso, D_scale_pso = pso_est.get_calibration()
 
         new_sensor.append((np.eye(3) + D_scale) @ mag_sensor[k] - bias_)
         new_sensor_ukf.append((np.eye(3) + D_scale_ukf) @ mag_sensor[k] - bias_ukf)
-        # new_sensor_pso.append((np.eye(3) + D_scale_pso) @ mag_sensor[k] - bias_pso)
-        # print("RMS error:",
-        #       np.dot(mag_true[k], new_sensor[-1]) / np.linalg.norm(mag_true[k]) / np.linalg.norm(new_sensor[-1]))
 
     ekf_cal.plot(np.linalg.norm(np.asarray(new_sensor), axis=1), np.linalg.norm(mag_true, axis=1))
     ukf.plot(np.linalg.norm(np.asarray(new_sensor_ukf), axis=1),

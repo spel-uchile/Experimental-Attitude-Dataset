@@ -32,7 +32,7 @@ mpl.rcParams['font.size'] = 12
 # CONFIG
 # PROJECT_FOLDER = "./data/20240804/"
 # PROJECT_FOLDER = "./data/M-20230824/"
-PROJECT_FOLDER = "./data/20230904/"
+# PROJECT_FOLDER = "./data/20230904/"
 # PROJECT_FOLDER = "./data/SimulationExample/"
 PROJECT_FOLDER = "./data/20231113/"
 

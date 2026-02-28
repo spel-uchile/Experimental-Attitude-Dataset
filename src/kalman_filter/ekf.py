@@ -8,7 +8,6 @@ import numpy as np
 from src.dynamics.quaternion import Quaternions
 from sklearn.metrics import mean_squared_error
 from tools.mathtools import *
-from tools.pso import PSOStandard
 
 rev_day = 15.23166528
 w_orbit = np.array([0, - 2 * np.pi * rev_day / 86400, 0])

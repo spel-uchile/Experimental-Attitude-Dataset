@@ -7,6 +7,7 @@ import time
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from vtkmodules.util.colors import deep_pink
 
 from tools.mathtools import julian_to_datetime
 
@@ -160,10 +161,24 @@ class Monitor:
         Sn = np.linalg.norm(S, axis=1, keepdims=True)
         sun_unit_est = np.divide(S, Sn, out=np.zeros_like(S), where=Sn > 0)
 
+        fig_earth_cam_total, axes_earth_cam_total = plt.subplots(figsize=(12, 4), nrows=1, ncols=1)
+        axes_earth_cam_total.set_title("MEKF and Camera Earth vector estimation - BF")
+        axes_earth_cam_total.set_xlabel("MJD")
+        axes_earth_cam_total.set_ylabel("Unit vector [-]")
+        axes_earth_cam_total.grid()
+
+        h_tx_total, = axes_earth_cam_total.plot(self.dataset['mjd'], earth_unit_est[:, 0],
+                                    label=r'MEKF: $e_{x,b}$')
+        h_ty_total, = axes_earth_cam_total.plot(self.dataset['mjd'], earth_unit_est[:, 1],
+                                    label=r'MEKF: $e_{y,b}$')
+        h_tz_total, = axes_earth_cam_total.plot(self.dataset['mjd'], earth_unit_est[:, 2],
+                                    label=r'MEKF: $e_{z,b}$')
+
+        id_ = 0
         for key, data in self.video_dataset.items():
-            fig_earth_cam, axes_earth_cam = plt.subplots(figsize=(8.5, 5), nrows=1, ncols=1)
+            fig_earth_cam, axes_earth_cam = plt.subplots(figsize=(4, 4), nrows=1, ncols=1)
             axes_earth_cam.grid()
-            axes_earth_cam.set_title("MEKF and Camera Earth vector estimation - BF")
+            # axes_earth_cam.set_title("MEKF and Camera Earth vector estimation - BF")
             axes_earth_cam.set_xlabel("MJD")
             axes_earth_cam.set_ylabel("Unit vector [-]")
 
@@ -178,17 +193,32 @@ class Monitor:
             h_tz, = axes_earth_cam.plot(self.dataset['mjd'], earth_unit_est[:, 2],
                                         label=r'MEKF: $e_{z,b}$')
 
+            h_cx_total, = axes_earth_cam_total.plot(data['MJD'], data['e_b_x'], 'o', label=r'CAM: $e_{x,b}$' if id_==0 else None)
+            h_cy_total, = axes_earth_cam_total.plot(data['MJD'], data['e_b_y'], 'o', label=r'CAM: $e_{y,b}$' if id_==0 else None)
+            h_cz_total, = axes_earth_cam_total.plot(data['MJD'], data['e_b_z'], 'o', label=r'CAM: $e_{z,b}$' if id_==0 else None)
+            id_ = 1
             h_tx.set_color(h_cx.get_color())
             h_ty.set_color(h_cy.get_color())
             h_tz.set_color(h_cz.get_color())
 
-            axes_earth_cam.legend(loc='center left', bbox_to_anchor=(1.02, 0.5), borderaxespad=0.)
-            fig_earth_cam.subplots_adjust(right=0.8)
+            h_cx_total.set_color(h_tx_total.get_color())
+            h_cy_total.set_color(h_ty_total.get_color())
+            h_cz_total.set_color(h_tz_total.get_color())
+
+            #axes_earth_cam.legend(loc='center left', bbox_to_anchor=(1.02, 0.5), borderaxespad=0.)
+            # fig_earth_cam.subplots_adjust(right=0.8)
             axes_earth_cam.set_xlim(data['MJD'].min() - 1 / 86400, data['MJD'].max() + 1 / 86400)
             plt.xticks(rotation=15)
             plt.ticklabel_format(useOffset=False)
             plt.tight_layout()
-            fig_earth_cam.savefig(self.folder_save + f"{key} - cam_mekf_earth_estimation_b.png")
+            fig_earth_cam.savefig(self.folder_save + f"{key} - cam_mekf_earth_estimation_b.png", dpi=300)
+
+        axes_earth_cam_total.legend(loc='center left', bbox_to_anchor=(1.02, 0.5), borderaxespad=0.)
+        axes_earth_cam_total.tick_params(axis='x', labelrotation=15)
+        fig_earth_cam_total.subplots_adjust(right=0.8, bottom=0.2)
+        axes_earth_cam_total.ticklabel_format(useOffset=False, style='plain', axis='x')
+        plt.tight_layout()
+        fig_earth_cam_total.savefig(self.folder_save + "cam_mekf_earth_estimation_b_total.png", dpi=300)
 
         for key, data in self.video_dataset.items():
             fig_sun_cam, axes_sun_cam = plt.subplots(figsize=(8.5, 5), nrows=1, ncols=1)
